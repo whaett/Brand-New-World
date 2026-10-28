@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BRAND NEW WORLD v1.5</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Biblioteki do połączeń Multiplayer P2P oraz WebSocket Relay (działa też lokalnie) -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="mainMenu">
+            <div id="screen1" class="menu-screen">
+                <h2 class="menu-title">Witaj w BRAND NEW WORLD</h2>
+                <div id="inviteBanner" style="display: none; background: rgba(41, 128, 185, 0.35); border: 2px solid #38bdf8; padding: 12px 24px; border-radius: 10px; margin-bottom: 18px; text-align: center;">
+                    <div id="inviteBannerText" style="font-size: 18px; font-weight: bold; color: #38bdf8; margin-bottom: 8px;">🔗 Zaproszenie do pokoju!</div>
+                    <button id="btnQuickJoinInvite" style="background: #27ae60; width: 280px; margin: 4px;">Dołącz od razu z linku 🚀</button>
+                </div>
+                <button id="btnPlay">Zagraj w grę</button>
+            </div>
+
+            <div id="screen2" class="menu-screen" style="display: none;">
+                <h2 class="menu-title">Wybierz tryb rozgrywki</h2>
+                <button id="btnSingle">Jednoosobowa</button>
+                <button id="btnMulti">Wieloosobowa 🌐</button>
+            </div>
+
+            <div id="screenMulti" class="menu-screen" style="display: none; width: 95%; max-width: 700px;">
+                <h2 class="menu-title" style="margin-bottom: 15px;">Tryb Wieloosobowy 🌐</h2>
+                <p class="multi-desc">Stwórz własny pokój i podaj kod znajomemu lub wpisz kod pokoju, aby dołączyć!</p>
+                
+                <div class="multi-panels">
+                    <div class="multi-box">
+                        <h3>Stwórz Pokój (Host)</h3>
+                        <p>Wygeneruj nowy świat i zaproś znajomych kodem.</p>
+                        <button id="btnHostGame">Stwórz Pokój</button>
+                    </div>
+
+                    <div class="multi-box">
+                        <h3>Dołącz do Gry</h3>
+                        <input type="text" id="roomCodeInput" placeholder="Kod pokoju (np. 4829)" maxlength="12">
+                        <button id="btnJoinGame">Połącz z Pokojem</button>
+                    </div>
+                </div>
+                <div id="multiStatus" class="multi-status"></div>
+                <button id="btnBackFromMulti" style="background: #555; width: 220px; margin-top: 15px;">Wróć</button>
+            </div>
+
+            <div id="screen3" class="menu-screen" style="display: none;">
+                <h2 class="menu-title">Podaj swój nick</h2>
+                <p class="nick-hint">Wymagane 4–12 znaków (tylko litery A-Z oraz cyfry 0-9)</p>
+                <input type="text" id="nickInput" placeholder="Twój nick..." maxlength="12" autocomplete="off">
+                <div id="nickError" class="error-msg"></div>
+                <button id="btnNextToSkins">Dalej</button>
+            </div>
+
+            <div id="screen4" class="menu-screen" style="display: none; width: 95%; max-width: 1050px;">
+                <h2 class="menu-title" style="margin-bottom: 15px;">Wybierz postać</h2>
+                <div id="skinError" class="error-msg" style="margin-bottom: 10px;"></div>
+                <div id="skinContainer" class="skin-grid"></div>
+                <button id="btnStartGame" style="margin-top: 15px;">Rozpocznij grę</button>
+            </div>
+        </div>
+
+        <!-- Przycisk kopiowania linku zaproszenia dla znajomych -->
+        <button id="btnCopyInviteLink" style="display: none;" title="Skopiuj bezpośredni link do tego pokoju dla znajomych">📋 Kopiuj Link Zaproszenia</button>
+
+        <!-- Okienko interakcji z graczem pod Prawym Przyciskiem Myszy (PPM) -->
+        <div id="playerContextMenu" style="display: none;">
+            <div id="contextMenuHeader" class="context-menu-header">👤 Gracz</div>
+            <button id="btnContextWhisper" class="context-menu-btn" type="button">💬 Szepnij (Prywatna wiadomość)</button>
+            <button id="btnContextWave" class="context-menu-btn" type="button">👋 Pomachaj graczowi</button>
+            <button id="btnContextClose" class="context-menu-btn close" type="button">❌ Zamknij</button>
+        </div>
+
+        <!-- Czat pod [T] -->
+        <div id="chatWrapper">
+            <div id="chatMessages"></div>
+            <div id="chatSuggestions" style="display: none;"></div>
+            <div id="commandBar" style="display: none;">
+                <span class="chat-prompt-icon">💬</span>
+                <input type="text" id="commandInput" placeholder="Napisz coś..." maxlength="120" autocomplete="off">
+                <button id="chatSendBtn" type="button">Wyślij</button>
+            </div>
+        </div>
+
+        <div id="gameOver">
+            <h2>ZGINĄŁEŚ!</h2>
+            <button id="respawnBtn">Odrodzenie</button>
+        </div>
+    </div>
+    
+    <script src="config.js"></script>
+    <script src="textures.js"></script>
+    <script src="skins.js"></script>
+    <script src="world.js"></script>
+    <script src="inventory.js"></script>
+    <script src="network.js"></script>
+    <script src="entities.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
