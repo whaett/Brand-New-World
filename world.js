@@ -140,6 +140,10 @@ function generateWorld(seedValue = currentWorldSeed) {
         else if (diff < -1) surfaceHeights[x] = surfaceHeights[x - 1] - 1;
         else surfaceHeights[x] = rawHeights[x];
     }
+    // Wyrównaj teren na samym Spawnie pod Totem Aborygeński (3 kratki szerokości)
+    const spawnH = surfaceHeights[SPAWN_TILE_X];
+    surfaceHeights[SPAWN_TILE_X - 1] = spawnH;
+    surfaceHeights[SPAWN_TILE_X + 1] = spawnH;
 
     for (let x = 0; x < MAP_WIDTH; x++) {
         map[x] = [];
@@ -412,6 +416,25 @@ function isOceanAt(tx) {
     return biomeMap[clampedTx] === 'ocean';
 }
 
+function isForestAt(tx) {
+    let clampedTx = Math.max(0, Math.min(MAP_WIDTH - 1, tx));
+    return biomeMap[clampedTx] === 'forest';
+}
+
+function countTreesNearTileX(tx, radius = 14) {
+    let count = 0;
+    let startX = Math.max(2, tx - radius);
+    let endX = Math.min(MAP_WIDTH - 3, tx + radius);
+    for (let x = startX; x <= endX; x++) {
+        let sy = surfaceHeights[x];
+        if (sy > 2 && sy < SEA_LEVEL && map[x] && map[x][sy - 1] === BLOCKS.WOOD) {
+            count++;
+        }
+    }
+    return count;
+}
+
+
 function getTile(x, y) { 
     if (typeof player !== 'undefined' && player.inStomach) {
         return (x >= 0 && x < STOMACH_WIDTH && y >= 0 && y < STOMACH_HEIGHT && stomachMap[x]) ? stomachMap[x][y] : BLOCKS.STOMACH_WALL;
@@ -432,6 +455,7 @@ function setTile(x, y, block, broadcast = true, forStomach = null) {
         return;
     }
     if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+        if (isSpawnTotemBaseTile(x, y) && block === BLOCKS.AIR) return;
         map[x][y] = block;
         modifiedTiles[`${x},${y}`] = block;
         if (broadcast && typeof sendBlockChange === 'function') {
@@ -555,4 +579,11 @@ function hasNeighborBlock(targetTx, targetTy) {
         }
     }
     return false;
+}
+
+// Ochrona podłoża pod niezniszczalnym Totemem na Spawnie
+function isSpawnTotemBaseTile(x, y) {
+    if (typeof player !== 'undefined' && player.inStomach) return false;
+    const spawnH = surfaceHeights[SPAWN_TILE_X];
+    return (x >= SPAWN_TILE_X - 1 && x <= SPAWN_TILE_X + 1 && y === spawnH);
 }

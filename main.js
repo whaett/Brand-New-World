@@ -369,6 +369,46 @@ function submitChatOrCommand() {
                     sendChatMessagePacket(restArgs, 'broadcast');
                 }
             }
+        } else if (baseCmd === '/time' || baseCmd === '/pora' || baseCmd === '/dzien' || baseCmd === '/noc') {
+            if (!player.isAdmin) {
+                showSystemNotification("Brak takiej komendy: " + parts[0], "#ff5252", 210, true);
+            } else {
+                let arg = (baseCmd === '/dzien') ? 'day' : ((baseCmd === '/noc') ? 'night' : restArgs.toLowerCase());
+                let msg = null;
+                let col = '#fde047';
+                if (arg === 'day' || arg === 'dzien' || arg === 'd') {
+                    worldTime = 0.42;
+                    currentDayPhaseName = 'day';
+                    msg = "☀️ Ustawiono porę dnia: Słoneczny Dzień!";
+                    col = '#fde047';
+                } else if (arg === 'night' || arg === 'noc' || arg === 'n') {
+                    worldTime = 0.92;
+                    currentDayPhaseName = 'night';
+                    msg = "🌙 Ustawiono porę dnia: Noc!";
+                    col = '#93c5fd';
+                } else if (arg === 'sunrise' || arg === 'wschod' || arg === 'poranek') {
+                    worldTime = 0.24;
+                    currentDayPhaseName = 'sunrise';
+                    msg = "🌅 Ustawiono porę dnia: Wschód słońca!";
+                    col = '#fb923c';
+                } else if (arg === 'sunset' || arg === 'zachod' || arg === 'wieczor') {
+                    worldTime = 0.74;
+                    currentDayPhaseName = 'sunset';
+                    msg = "🌇 Ustawiono porę dnia: Zachód słońca!";
+                    col = '#f97316';
+                } else {
+                    showSystemNotification("Użycie: /pora [dzien | noc | wschod | zachod]", "#ff5252", 210, true);
+                }
+                if (msg) {
+                    lastTimeUpdateMs = performance.now();
+                    showSystemNotification(msg, col, 210, true);
+                    if (typeof sendTimeSyncPacket === 'function') {
+                        sendTimeSyncPacket(worldTime, msg, col);
+                    }
+                }
+            }
+        } else if (baseCmd === '/spawn') {
+            teleportPlayerToSpawn();
         } else if (baseCmd === '/pig') {
             // /pig jest dostępne dla każdego gracza
             spawnAndMountPigCommand();
@@ -522,13 +562,18 @@ window.addEventListener('blur', () => {
     for (let k in keys) keys[k] = false;
 });
 
+let lastFrameTimeMs = 0;
+let frameAccumulatorMs = 0;
+const FIXED_STEP_MS = 1000 / 70; // Stałe 60 klatek fizyki na sekundę niezależnie od odświeżania monitora (60Hz/144Hz/240Hz)
+
 function launchGameLoop() {
     document.getElementById('mainMenu').style.display = 'none';
     cameraX = player.x + player.width / 2 - (canvas.width / SCALE) / 2;
     cameraY = player.y + player.height / 2 - (canvas.height / SCALE) / 2;
     if (!isPlaying) {
         isPlaying = true;
-        requestAnimationFrame(gameLoop); 
+        lastFrameTimeMs = performance.now();
+        frameAccumulatorMs = 0;
     }
     // Brak domyślnych komunikatów pomocy na czacie!
     if (isMultiplayerMode && roomCode) {
@@ -950,6 +995,123 @@ function drawAirBubble(ctx, x, y, size, isFull) {
     ctx.restore();
 }
 
+function drawDeerEntity(ctx, d) {
+    ctx.save();
+    const w = d.width || 24;
+    const h = d.height || 20;
+    ctx.translate(d.x + w / 2, d.y + h / 2);
+    ctx.scale(d.direction || 1, 1);
+    ctx.translate(-w / 2, -h / 2);
+
+    const isByk = (d.variant === 'byk');
+    const isCiele = (d.variant === 'ciele');
+    const scaleF = isByk ? 1.15 : (isCiele ? 0.72 : 0.98);
+
+    const coatMain = isByk ? '#6F3818' : (isCiele ? '#B56B38' : '#8D4E25');
+    const coatDark = isByk ? '#4A230D' : (isCiele ? '#8A4B20' : '#653516');
+    const bellyCol = isByk ? '#A8744F' : (isCiele ? '#EBD3B7' : '#D2B08C');
+    constlegSwing = (d.state === 'walk') ? Math.sin(d.walkFrame * 2.2) * 3.0 : 0;
+
+    // 1. Tylne i przednie nogi (długie, smukłe nogi jelenia z kopytkami)
+    const legTop = h * 0.48;
+    const legLen = h * 0.52;
+    const legW = Math.max(2, 2.5 * scaleF);
+
+    // Nogi dalszego planu
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(w * 0.18 - constlegSwing * 0.7, legTop, legW, legLen);
+    ctx.fillRect(w * 0.72 + constlegSwing * 0.7, legTop, legW, legLen);
+
+    // Nogi bliższego planu
+    ctx.fillStyle = coatMain;
+    ctx.fillRect(w * 0.24 + constlegSwing, legTop, legW, legLen);
+    ctx.fillRect(w * 0.66 - constlegSwing, legTop, legW, legLen);
+
+    // Ciemne kopytka
+    ctx.fillStyle = '#1E1B18';
+    ctx.fillRect(w * 0.24 + constlegSwing, h - 2, legW + 0.5, 2);
+    ctx.fillRect(w * 0.66 - constlegSwing, h - 2, legW + 0.5, 2);
+
+    // 2. Tułów i jasny brzuch
+    ctx.fillStyle = coatMain;
+    ctx.fillRect(w * 0.14, h * 0.24, w * 0.68, h * 0.38);
+    ctx.fillStyle = bellyCol;
+    ctx.fillRect(w * 0.20, h * 0.50, w * 0.54, h * 0.12);
+
+    // Ciemniejsza grzywa na karku u Byka
+    if (isByk) {
+        ctx.fillStyle = '#3D1C08';
+        ctx.fillRect(w * 0.58, h * 0.18, w * 0.26, h * 0.26);
+    }
+
+    // Białe cętki na grzbiecie u Cielęcia (młodego jelonka)
+    if (isCiele) {
+        ctx.fillStyle = '#FFF8E7';
+        ctx.fillRect(w * 0.24, h * 0.30, 2, 2);
+        ctx.fillRect(w * 0.38, h * 0.28, 2, 2);
+        ctx.fillRect(w * 0.52, h * 0.31, 2, 2);
+        ctx.fillRect(w * 0.31, h * 0.39, 2, 2);
+        ctx.fillRect(w * 0.46, h * 0.38, 2, 2);
+    }
+
+    // Krótki ogonek z jasnym spodem
+    ctx.fillStyle = bellyCol;
+    ctx.fillRect(w * 0.06, h * 0.26, w * 0.10, h * 0.12);
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(w * 0.06, h * 0.24, w * 0.10, h * 0.06);
+
+    // 3. Szyja i głowa (pochylają się w dół do trawy podczas jedzenia 'graze'!)
+    ctx.save();
+    let shoulderX = w * 0.74;
+    let shoulderY = h * 0.32;
+    ctx.translate(shoulderX, shoulderY);
+
+    let grazeRatio = d.grazeProgress || (d.state === 'graze' ? 1 : 0);
+    let chewBob = (d.state === 'graze') ? Math.sin(globalTick * 0.32) * 0.09 : 0;
+    let neckAngle = grazeRatio * 1.18 + chewBob; // Pochylenie szyi ku ziemi przy skubaniu trawy
+    ctx.rotate(neckAngle);
+
+    // Szyja
+    ctx.fillStyle = isByk ? '#52270F' : coatMain;
+    ctx.fillRect(-3 * scaleF, -8 * scaleF, 6 * scaleF, 10 * scaleF);
+
+    // Głowa i pysk
+    ctx.fillStyle = coatMain;
+    ctx.fillRect(-2 * scaleF, -12 * scaleF, 10 * scaleF, 6 * scaleF);
+    ctx.fillRect(6 * scaleF, -10.5 * scaleF, 4.5 * scaleF, 4.2 * scaleF);
+
+    // Ciemny nosek i oko
+    ctx.fillStyle = '#18181B';
+    ctx.fillRect(9.2 * scaleF, -10.2 * scaleF, 1.8 * scaleF, 1.8 * scaleF);
+    ctx.fillRect(3.2 * scaleF, -10.5 * scaleF, 1.6 * scaleF, 1.6 * scaleF);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(3.2 * scaleF, -10.5 * scaleF, 0.7 * scaleF, 0.7 * scaleF);
+
+    // Uszy
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(-3.5 * scaleF, -14.5 * scaleF, 2.8 * scaleF, 3.5 * scaleF);
+    ctx.fillStyle = bellyCol;
+    ctx.fillRect(-2.8 * scaleF, -13.8 * scaleF, 1.4 * scaleF, 2.2 * scaleF);
+
+    // 4. Rozłożyste poroże (wieniec) u Byka!
+    if (isByk) {
+        ctx.fillStyle = '#D9B98B';
+        // Główna tyka poroża
+        ctx.fillRect(-1.5, -22, 2.4, 10);
+        ctx.fillRect(-4.5, -24, 3.5, 2.4);
+        // Odnogi poroża (oczniak, opierak i korona)
+        ctx.fillRect(1.0, -18, 4.0, 2.0);
+        ctx.fillRect(1.0, -22, 4.5, 2.0);
+        ctx.fillRect(4.0, -25, 2.2, 4.5);
+        ctx.fillRect(-5.5, -27, 2.2, 4.5);
+        ctx.fillStyle = '#B08D5B';
+        ctx.fillRect(-1.5, -16, 2.4, 4);
+    }
+
+    ctx.restore();
+    ctx.restore();
+}
+
 function drawPigEntity(ctx, px, py, width, height, direction, wingFlap, hasSaddle) {
     ctx.save();
     ctx.translate(px + width / 2, py + height / 2);
@@ -978,31 +1140,37 @@ function drawPigEntity(ctx, px, py, width, height, direction, wingFlap, hasSaddl
     ctx.restore();
 }
 
-function drawSandwormEntity(ctx, headX, headY, segments, radius = 12, numSegments = 15) {
+function drawSandwormEntity(ctx, headX, headY, segments, radius = 12, numSegments = 15, tintEffect = null) {
+    let segCol = tintEffect ? blendColorWithTint('#8B7355', tintEffect) : '#8B7355';
+    let headCol = tintEffect ? blendColorWithTint('#5C4033', tintEffect) : '#5C4033';
     if (Array.isArray(segments)) {
         for (let i = segments.length - 1; i >= 0; i--) {
             let seg = segments[i];
             if (!seg) continue;
             let segRadius = radius;
             if (i > numSegments - 5) segRadius = radius * (numSegments - i) / 5;
-            ctx.fillStyle = '#8B7355';
+
+            ctx.fillStyle = segCol;
             ctx.beginPath();
             ctx.arc(seg.x, seg.y, Math.max(segRadius, 2), 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = '#5C4033';
+            ctx.strokeStyle = headCol;
             ctx.lineWidth = 1;
             ctx.stroke();
         }
     }
-    ctx.fillStyle = '#5C4033';
+
+    ctx.fillStyle = headCol;
     ctx.beginPath();
     ctx.arc(headX, headY, radius + 2, 0, Math.PI * 2);
     ctx.fill();
+
     ctx.fillStyle = '#000';
     ctx.beginPath();
     ctx.arc(headX, headY, radius - 2, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = 'white';
+
+    ctx.fillStyle = tintEffect ? blendColorWithTint('#FFFFFF', tintEffect) : 'white';
     for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
         let zx = headX + Math.cos(a) * (radius - 2);
         let zy = headY + Math.sin(a) * (radius - 2);
@@ -1263,9 +1431,454 @@ function drawOverheadPlayerName(ctx, centerX, yPos, nick, isAdmin, isLocalPlayer
     ctx.restore();
 }
 
-function draw() {
-    ctx.fillStyle = player.inStomach ? '#22060B' : COLORS[BLOCKS.AIR]; 
+// ==========================================
+// KLIMATYCZNE NIEBO: GRADIENT PÓR DNIA, SŁOŃCE, KSIĘŻYC, GWIAZDY I CHMURY
+// ==========================================
+const SKY_KEYFRAMES = [
+    { t: 0.00, zenith: [2, 6, 23],    mid: [11, 19, 43],   horizon: [27, 38, 59],   cMain: [30, 41, 59],    cHigh: [71, 85, 105],   cShad: [15, 23, 42],   ambient: [4, 9, 24, 0.56],     starA: 1.00 },
+    { t: 0.18, zenith: [9, 13, 28],   mid: [22, 33, 62],   horizon: [67, 56, 202],  cMain: [51, 65, 85],    cHigh: [129, 140, 248], cShad: [30, 41, 59],   ambient: [12, 16, 42, 0.44],   starA: 0.80 },
+    { t: 0.24, zenith: [30, 58, 138], mid: [124, 58, 237], horizon: [249, 115, 22], cMain: [254, 215, 170], cHigh: [254, 240, 138], cShad: [154, 52, 18],  ambient: [249, 115, 22, 0.16], starA: 0.18 },
+    { t: 0.29, zenith: [37, 99, 235], mid: [96, 165, 250], horizon: [253, 230, 138],cMain: [255, 255, 255], cHigh: [254, 249, 195], cShad: [203, 213, 225],ambient: [255, 220, 140, 0.05],starA: 0.00 },
+    { t: 0.36, zenith: [2, 132, 199], mid: [56, 189, 248], horizon: [186, 230, 253],cMain: [255, 255, 255], cHigh: [255, 255, 255], cShad: [203, 213, 225],ambient: [0, 0, 0, 0.00],      starA: 0.00 },
+    { t: 0.50, zenith: [3, 105, 161], mid: [56, 189, 248], horizon: [224, 242, 254],cMain: [255, 255, 255], cHigh: [255, 255, 255], cShad: [203, 213, 225],ambient: [0, 0, 0, 0.00],      starA: 0.00 },
+    { t: 0.65, zenith: [2, 132, 199], mid: [56, 189, 248], horizon: [186, 230, 253],cMain: [255, 255, 255], cHigh: [255, 255, 255], cShad: [203, 213, 225],ambient: [255, 190, 100, 0.03],starA: 0.00 },
+    { t: 0.71, zenith: [29, 78, 216], mid: [234, 88, 12],  horizon: [253, 224, 71], cMain: [254, 215, 170], cHigh: [254, 240, 138], cShad: [180, 83, 9],   ambient: [245, 130, 40, 0.15], starA: 0.05 },
+    { t: 0.76, zenith: [30, 27, 75],  mid: [190, 18, 60],  horizon: [249, 115, 22], cMain: [253, 164, 175], cHigh: [253, 224, 71],  cShad: [136, 19, 55],  ambient: [215, 65, 65, 0.22],  starA: 0.38 },
+    { t: 0.82, zenith: [9, 13, 22],   mid: [30, 27, 75],   horizon: [76, 29, 149],  cMain: [51, 65, 85],    cHigh: [100, 116, 139], cShad: [15, 23, 42],   ambient: [8, 14, 34, 0.46],    starA: 0.85 },
+    { t: 0.90, zenith: [2, 6, 23],    mid: [11, 19, 43],   horizon: [27, 38, 59],   cMain: [30, 41, 59],    cHigh: [71, 85, 105],   cShad: [15, 23, 42],   ambient: [4, 9, 24, 0.56],     starA: 1.00 },
+    { t: 1.00, zenith: [2, 6, 23],    mid: [11, 19, 43],   horizon: [27, 38, 59],   cMain: [30, 41, 59],    cHigh: [71, 85, 105],   cShad: [15, 23, 42],   ambient: [4, 9, 24, 0.56],     starA: 1.00 }
+];
+
+const SKY_STARS = (function() {
+    let arr = [];
+    for (let i = 0; i < 95; i++) {
+        let s1 = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+        let s2 = Math.sin(i * 45.164 + 19.13) * 23421.631;
+        let s3 = Math.sin(i * 93.712 + 51.7) * 65432.123;
+        arr.push({
+            xRatio: s1 - Math.floor(s1),
+            yRatio: (s2 - Math.floor(s2)) * 0.66,
+            size: (i % 7 === 0) ? 3 : ((i % 3 === 0) ? 2 : 1.5),
+            twinkleSpeed: 0.03 + (s3 - Math.floor(s3)) * 0.06,
+            phase: i * 1.7,
+            bright: (i % 9 === 0)
+        });
+    }
+    return arr;
+})();
+
+const SKY_CLOUDS = (function() {
+    let arr = [];
+    const templates = [
+        [ { dx: -36, dy: 6, w: 34, h: 18 }, { dx: -16, dy: -6, w: 42, h: 28 }, { dx: 16, dy: 0, w: 36, h: 22 }, { dx: 38, dy: 8, w: 26, h: 14 } ],
+        [ { dx: -44, dy: 8, w: 32, h: 16 }, { dx: -22, dy: -4, w: 38, h: 24 }, { dx: 6, dy: -10, w: 44, h: 30 }, { dx: 36, dy: 2, w: 34, h: 20 } ],
+        [ { dx: -28, dy: 4, w: 30, h: 16 }, { dx: -6, dy: -5, w: 36, h: 22 }, { dx: 20, dy: 4, w: 28, h: 16 } ]
+    ];
+    for (let i = 0; i < 14; i++) {
+        let layer = i < 7 ? 0 : 1; // 0 = dalszy plan, 1 = bliższy plan
+        arr.push({
+            baseX: (i / 7) * 2200 + (i % 3) * 110,
+            yRatio: layer === 0 ? (0.08 + (i % 4) * 0.07) : (0.12 + (i % 4) * 0.08),
+            speed: layer === 0 ? (0.16 + (i % 3) * 0.04) : (0.28 + (i % 3) * 0.06),
+            scale: layer === 0 ? (1.05 + (i % 2) * 0.2) : (1.45 + (i % 3) * 0.22),
+            layer: layer,
+            puffs: templates[i % templates.length]
+        });
+    }
+    return arr;
+})();
+
+function lerpArr(a, b, f) {
+    return a.map((v, idx) => v + (b[idx] - v) * f);
+}
+
+function rgbStr(arr, alpha = 1) {
+    if (alpha < 1) return `rgba(${Math.round(arr[0])}, ${Math.round(arr[1])}, ${Math.round(arr[2])}, ${alpha.toFixed(3)})`;
+    return `rgb(${Math.round(arr[0])}, ${Math.round(arr[1])}, ${Math.round(arr[2])})`;
+}
+
+function getSkyPaletteAtTime(t) {
+    let normT = ((t % 1) + 1) % 1;
+    let k0 = SKY_KEYFRAMES[0];
+    let k1 = SKY_KEYFRAMES[SKY_KEYFRAMES.length - 1];
+    for (let i = 0; i < SKY_KEYFRAMES.length - 1; i++) {
+        if (normT >= SKY_KEYFRAMES[i].t && normT <= SKY_KEYFRAMES[i + 1].t) {
+            k0 = SKY_KEYFRAMES[i];
+            k1 = SKY_KEYFRAMES[i + 1];
+            break;
+        }
+    }
+    let span = Math.max(0.0001, k1.t - k0.t);
+    let f = Math.max(0, Math.min(1, (normT - k0.t) / span));
+    return {
+        zenith: lerpArr(k0.zenith, k1.zenith, f),
+        mid: lerpArr(k0.mid, k1.mid, f),
+        horizon: lerpArr(k0.horizon, k1.horizon, f),
+        cMain: lerpArr(k0.cMain, k1.cMain, f),
+        cHigh: lerpArr(k0.cHigh, k1.cHigh, f),
+        cShad: lerpArr(k0.cShad, k1.cShad, f),
+        ambient: lerpArr(k0.ambient, k1.ambient, f),
+        starA: k0.starA + (k1.starA - k0.starA) * f
+    };
+}
+
+function drawCloudCluster(ctx, cx, cy, scale, pal, alpha) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = alpha;
+
+    const highCol = rgbStr(pal.cHigh);
+    const mainCol = rgbStr(pal.cMain);
+    const shadCol = rgbStr(pal.cShad);
+
+    for (let p of pal.puffs) {
+        ctx.fillStyle = shadCol;
+        ctx.fillRect(p.dx, p.dy + p.h * 0.62, p.w, p.h * 0.38);
+        ctx.fillStyle = mainCol;
+        ctx.fillRect(p.dx, p.dy + p.h * 0.16, p.w, p.h * 0.54);
+        ctx.fillStyle = highCol;
+        ctx.fillRect(p.dx + 2, p.dy, p.w - 4, p.h * 0.24);
+    }
+    ctx.restore();
+}
+
+function drawAtmosphericSky(ctx) {
+    if (player.inStomach) {
+        ctx.fillStyle = '#22060B';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        return;
+    }
+
+    const pal = getSkyPaletteAtTime(worldTime);
+
+    // 1. Wielostopniowy gradient nieba dopasowany do pory dnia
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    skyGrad.addColorStop(0.0, rgbStr(pal.zenith));
+    skyGrad.addColorStop(0.52, rgbStr(pal.mid));
+    skyGrad.addColorStop(1.0, rgbStr(pal.horizon));
+    ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 2. Migoczące gwiazdy nocą oraz o świcie i zmierzchu
+    if (pal.starA > 0.01) {
+        ctx.save();
+        for (let st of SKY_STARS) {
+            let sx = ((st.xRatio * canvas.width * 1.4 - cameraX * 0.04) % canvas.width + canvas.width) % canvas.width;
+            let sy = st.yRatio * canvas.height;
+            let twinkle = 0.45 + 0.55 * Math.sin(globalTick * st.twinkleSpeed + st.phase);
+            let a = pal.starA * twinkle;
+            ctx.fillStyle = `rgba(248, 250, 252, ${a.toFixed(3)})`;
+            ctx.fillRect(sx, sy, st.size, st.size);
+            if (st.bright && twinkle > 0.82) {
+                ctx.fillStyle = `rgba(186, 230, 253, ${(a * 0.55).toFixed(3)})`;
+                ctx.fillRect(sx - 2, sy + 1, st.size + 4, 1);
+                ctx.fillRect(sx + 1, sy - 2, 1, st.size + 4);
+            }
+        }
+        ctx.restore();
+    }
+
+    // 3. Chmury dalszego planu (warstwa 0)
+    const wrapW = Math.max(canvas.width + 420, 1900);
+    for (let cl of SKY_CLOUDS) {
+        if (cl.layer !== 0) continue;
+        let cx = ((cl.baseX + globalTick * cl.speed - cameraX * 0.12) % wrapW + wrapW) % wrapW - 210;
+        let cy = cl.yRatio * canvas.height;
+        drawCloudCluster(ctx, cx, cy, cl.scale, { ...pal, puffs: cl.puffs }, 0.72);
+    }
+
+    // 4. SŁOŃCE (w dzień, o wschodzie i zachodzie: worldTime 0.20 .. 0.80)
+    if (worldTime >= 0.20 && worldTime <= 0.80) {
+        let sunP = (worldTime - 0.20) / 0.60;
+        let sunX = canvas.width * (0.08 + 0.84 * sunP);
+        let sunArc = Math.sin(sunP * Math.PI);
+        let sunY = canvas.height * 0.56 - sunArc * (canvas.height * 0.41);
+        let horizonFactor = 1 - sunArc;
+        let sunAlpha = Math.min(1, Math.sin(sunP * Math.PI) * 3.2);
+
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, sunAlpha));
+
+        let haloR = 115 + horizonFactor * 45;
+        let haloGrad = ctx.createRadialGradient(sunX, sunY, 8, sunX, sunY, haloR);
+        if (horizonFactor > 0.55) {
+            haloGrad.addColorStop(0.0, 'rgba(254, 240, 138, 0.85)');
+            haloGrad.addColorStop(0.35, 'rgba(249, 115, 22, 0.45)');
+            haloGrad.addColorStop(1.0, 'rgba(234, 88, 12, 0.0)');
+        } else {
+            haloGrad.addColorStop(0.0, 'rgba(254, 249, 195, 0.85)');
+            haloGrad.addColorStop(0.35, 'rgba(250, 204, 21, 0.35)');
+            haloGrad.addColorStop(1.0, 'rgba(253, 224, 71, 0.0)');
+        }
+        ctx.fillStyle = haloGrad;
+        ctx.beginPath();
+        ctx.arc(sunX, sunY, haloR, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.translate(sunX, sunY);
+        ctx.save();
+        ctx.rotate(globalTick * 0.004);
+        ctx.fillStyle = horizonFactor > 0.55 ? 'rgba(251, 146, 60, 0.42)' : 'rgba(253, 224, 71, 0.38)';
+        let sSize = Math.round(36 + horizonFactor * 8);
+        ctx.fillRect(-sSize / 2, -sSize / 2, sSize, sSize);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillRect(-sSize / 2, -sSize / 2, sSize, sSize);
+        ctx.restore();
+
+        let coreS = Math.round(28 + horizonFactor * 6);
+        ctx.fillStyle = horizonFactor > 0.55 ? '#f97316' : '#facc15';
+        ctx.fillRect(-coreS / 2 - 3, -coreS / 2 - 3, coreS + 6, coreS + 6);
+        ctx.fillStyle = horizonFactor > 0.55 ? '#fde047' : '#fef08a';
+        ctx.fillRect(-coreS / 2, -coreS / 2, coreS, coreS);
+        ctx.fillStyle = '#fefce8';
+        ctx.fillRect(-coreS / 2 + 5, -coreS / 2 + 5, coreS - 10, coreS - 10);
+        ctx.restore();
+    }
+
+    // 5. KSIĘŻYC (w nocy, późnym zmierzchem i o świcie: worldTime >= 0.76 lub <= 0.24)
+    if (worldTime >= 0.76 || worldTime <= 0.24) {
+        let nightElapsed = (worldTime >= 0.76) ? (worldTime - 0.76) : (worldTime + 1.0 - 0.76);
+        let moonP = nightElapsed / 0.48;
+        let moonX = canvas.width * (0.10 + 0.80 * moonP);
+        let moonArc = Math.sin(moonP * Math.PI);
+        let moonY = canvas.height * 0.54 - moonArc * (canvas.height * 0.39);
+        let moonAlpha = Math.min(1, moonArc * 3.0);
+
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, moonAlpha));
+
+        let mHaloR = 105;
+        let mGrad = ctx.createRadialGradient(moonX, moonY, 6, moonX, moonY, mHaloR);
+        mGrad.addColorStop(0.0, 'rgba(226, 232, 240, 0.65)');
+        mGrad.addColorStop(0.38, 'rgba(148, 163, 184, 0.24)');
+        mGrad.addColorStop(1.0, 'rgba(56, 189, 248, 0.0)');
+        ctx.fillStyle = mGrad;
+        ctx.beginPath();
+        ctx.arc(moonX, moonY, mHaloR, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.translate(moonX, moonY);
+        const mS = 28;
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(-mS / 2 - 2, -mS / 2 - 2, mS + 4, mS + 4);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(-mS / 2, -mS / 2, mS, mS);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(-mS / 2, -mS / 2, 6, mS);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(-5, -7, 6, 5);
+        ctx.fillRect(4, 2, 7, 6);
+        ctx.fillRect(-7, 5, 5, 4);
+        ctx.restore();
+    }
+
+    // 6. Puszyste chmury pierwszego planu (warstwa 1)
+    for (let cl of SKY_CLOUDS) {
+        if (cl.layer !== 1) continue;
+        let cx = ((cl.baseX + globalTick * cl.speed - cameraX * 0.25) % wrapW + wrapW) % wrapW - 210;
+        let cy = cl.yRatio * canvas.height;
+        drawCloudCluster(ctx, cx, cy, cl.scale, { ...pal, puffs: cl.puffs }, 0.90);
+    }
+}
+
+function drawAtmosphericLightingOverlay(ctx) {
+    if (player.inStomach) return;
+    const pal = getSkyPaletteAtTime(worldTime);
+    const amb = pal.ambient;
+    if (!amb || amb[3] <= 0.01) return;
+
+    ctx.save();
+    let isNightLight = (worldTime >= 0.78 || worldTime <= 0.22);
+    if (isNightLight) {
+        let pScreenX = (player.x + player.width / 2 - cameraX) * SCALE;
+        let pScreenY = (player.y + player.height / 2 - cameraY) * SCALE;
+        let nightGrad = ctx.createRadialGradient(pScreenX, pScreenY, 35, pScreenX, pScreenY, 340);
+        let innerA = Math.max(0.08, amb[3] * 0.35);
+        nightGrad.addColorStop(0.0, `rgba(${Math.round(amb[0])}, ${Math.round(amb[1])}, ${Math.round(amb[2])}, ${innerA.toFixed(3)})`);
+        nightGrad.addColorStop(1.0, `rgba(${Math.round(amb[0])}, ${Math.round(amb[1])}, ${Math.round(amb[2])}, ${amb[3].toFixed(3)})`);
+        ctx.fillStyle = nightGrad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    } else {
+        ctx.fillStyle = `rgba(${Math.round(amb[0])}, ${Math.round(amb[1])}, ${Math.round(amb[2])}, ${amb[3].toFixed(3)})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    ctx.restore();
+}
+
+// ==========================================
+// NIEZNISZCZALNY TOTEM ABORYGEŃSKI NA SPAWNIE (W TLE, NIE PRZESZKADZA W CHODZENIU)
+// ==========================================
+function drawSpawnAboriginalTotem(ctx) {
+    if (player.inStomach) return;
+    const groundY = surfaceHeights[SPAWN_TILE_X] * TILE_SIZE;
+    const centerX = SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
+
+    // Rysuj tylko gdy okolica Spawnu jest w polu widzenia kamery
+    if (centerX + 80 < cameraX || centerX - 80 > cameraX + canvas.width / SCALE) return;
+
+    ctx.save();
+    ctx.translate(centerX, groundY);
+
+    // 1. Kamienno-ziemny postument rytualny u podstawy (szerokość 38px, wysokość 10px)
+    ctx.fillStyle = '#3E2723';
+    ctx.fillRect(-19, -10, 38, 10);
+    ctx.fillStyle = '#5D4037';
+    ctx.fillRect(-17, -9, 34, 4);
+    // Kropki aborygeńskie na postumencie (biała kreda i żółta ochra)
+    for (let dx = -14; dx <= 14; dx += 4) {
+        ctx.fillStyle = (Math.abs(dx) % 8 === 0) ? '#F1C40F' : '#ECF0F1';
+        ctx.fillRect(dx - 0.8, -6, 1.6, 1.6);
+    }
+
+    // 2. Główny rzeźbiony pień totemu (ciemne drewno żelazne / eukaliptusowe, wysokość 88px)
+    const poleW = 20;
+    const poleH = 88;
+    ctx.fillStyle = '#27160E';
+    ctx.fillRect(-poleW / 2 - 1, -poleH - 8, poleW + 2, poleH);
+    ctx.fillStyle = '#3E2417';
+    ctx.fillRect(-poleW / 2, -poleH - 8, poleW, poleH);
+    // Cieniowanie pionowe pnia
+    ctx.fillStyle = '#4E3021';
+    ctx.fillRect(-poleW / 2 + 2, -poleH - 8, 4, poleH);
+    ctx.fillStyle = '#1E100A';
+    ctx.fillRect(poleW / 2 - 3, -poleH - 8, 3, poleH);
+
+    // --- SEGMENT DOLNY (-10 do -36): Wąż Tęczowy i Aborygeńskie Kręgi Ziemi ---
+    // Pasy czerwonej i żółtej ochry
+    ctx.fillStyle = '#B03A2E';
+    ctx.fillRect(-poleW / 2, -36, poleW, 4);
+    ctx.fillRect(-poleW / 2, -16, poleW, 3);
+    ctx.fillStyle = '#D68910';
+    ctx.fillRect(-poleW / 2, -32, poleW, 2);
+
+    // Koncentryczny symbol plemienny (miejsce spotkań / święte źródło)
+    ctx.fillStyle = '#C0392B';
+    ctx.beginPath();
+    ctx.arc(0, -24, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#F39C12';
+    ctx.beginPath();
+    ctx.arc(0, -24, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#111111';
+    ctx.beginPath();
+    ctx.arc(0, -24, 2.0, 0, Math.PI * 2);
+    ctx.fill();
+    // Białe kropki wokół kręgu (dot painting)
+    for (let a = 0; a < 8; a++) {
+        let ang = (a / 8) * Math.PI * 2;
+        ctx.fillStyle = '#ECF0F1';
+        ctx.fillRect(Math.cos(ang) * 8 - 0.7, -24 + Math.sin(ang) * 8 - 0.7, 1.4, 1.4);
+    }
+
+    // --- SEGMENT ŚRODKOWY (-36 do -66): Maska Przodków i Boczne Tarcze Plemienne ---
+    // Boczne rzeźbione skrzydła / tarcze aborygeńskie z wzorem kropek
+    ctx.fillStyle = '#27160E';
+    ctx.fillRect(-26, -62, 16, 20);
+    ctx.fillRect(10, -62, 16, 20);
+    ctx.fillStyle = '#922B21';
+    ctx.fillRect(-24, -60, 12, 16);
+    ctx.fillRect(12, -60, 12, 16);
+    // Geometryczne pasy i kropki na bocznych tarczach
+    ctx.fillStyle = '#F1C40F';
+    ctx.fillRect(-22, -54, 8, 2);
+    ctx.fillRect(14, -54, 8, 2);
+    for (let dy = -58; dy <= -46; dy += 4) {
+        ctx.fillStyle = '#ECF0F1';
+        ctx.fillRect(-22, dy, 1.5, 1.5);
+        ctx.fillRect(-16, dy, 1.5, 1.5);
+        ctx.fillRect(15, dy, 1.5, 1.5);
+        ctx.fillRect(21, dy, 1.5, 1.5);
+    }
+
+    // Twarz / Maska Przodka na pniu środkowym
+    ctx.fillStyle = '#78281F';
+    ctx.fillRect(-9, -63, 18, 24);
+    // Białe plemienne obwódki oczu
+    ctx.fillStyle = '#ECF0F1';
+    ctx.fillRect(-7.5, -59, 6, 5);
+    ctx.fillRect(1.5, -59, 6, 5);
+    // Węglowe wnętrze oczu i turkusowy blask duchowy
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(-6, -58, 3.5, 3);
+    ctx.fillRect(2.5, -58, 3.5, 3);
+    let glowPulse = 0.75 + Math.sin(globalTick * 0.08) * 0.25;
+    ctx.fillStyle = `rgba(56, 189, 248, ${glowPulse.toFixed(2)})`;
+    ctx.fillRect(-5, -57.3, 1.8, 1.8);
+    ctx.fillRect(3.5, -57.3, 1.8, 1.8);
+
+    // Rzeźbiony nos i rytualne malowanie z kropek na policzkach
+    ctx.fillStyle = '#D35400';
+    ctx.fillRect(-1.5, -56, 3, 8);
+    ctx.fillStyle = '#F1C40F';
+    for (let dx = -7; dx <= 7; dx += 3.5) {
+        ctx.fillRect(dx - 0.7, -49, 1.4, 1.4);
+    }
+    // Rytualne usta
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(-5, -45, 10, 3);
+    ctx.fillStyle = '#ECF0F1';
+    for (let tx = -4; tx <= 3; tx += 2.3) {
+        ctx.fillRect(tx, -44.5, 1.2, 2);
+    }
+
+    // --- SEGMENT GÓRNY (-66 do -98): Duch Czasu Snu (Dreamtime) i Korona Piór/Słońca ---
+    ctx.fillStyle = '#B03A2E';
+    ctx.fillRect(-poleW / 2 - 2, -67, poleW + 4, 3);
+    ctx.fillStyle = '#F39C12';
+    ctx.fillRect(-poleW / 2 - 1, -96, poleW + 2, 3);
+
+    // Górna głowa strażnika
+    ctx.fillStyle = '#3E2417';
+    ctx.fillRect(-11, -93, 22, 26);
+    // Kropkowany łuk nad głową (symbol Słońca i Gwiazd)
+    ctx.fillStyle = '#E67E22';
+    ctx.fillRect(-9, -91, 18, 5);
+    for (let dx = -8; dx <= 8; dx += 3.2) {
+        ctx.fillStyle = '#ECF0F1';
+        ctx.fillRect(dx - 0.7, -89.5, 1.4, 1.4);
+    }
+
+    // Świecące złocisto oczy górnego ducha
+    ctx.fillStyle = '#ECF0F1';
+    ctx.fillRect(-7, -82, 5, 4);
+    ctx.fillRect(2, -82, 5, 4);
+    ctx.fillStyle = '#F1C40F';
+    ctx.fillRect(-5.5, -81, 2.5, 2.5);
+    ctx.fillRect(3.0, -81, 2.5, 2.5);
+
+    // Plemienne romby poniżej oczu
+    ctx.fillStyle = '#38BDF8';
+    ctx.fillRect(-2, -75, 4, 4);
+    ctx.fillStyle = '#ECF0F1';
+    ctx.fillRect(-7, -74, 2, 2);
+    ctx.fillRect(5, -74, 2, 2);
+
+    // Zwieńczenie totemu — rytualny pióropusz / promienie na szczycie
+    const feathers = [-10, -5, 0, 5, 10];
+    for (let i = 0; i < feathers.length; i++) {
+        let fx = feathers[i];
+        let fh = (i === 2) ? 12 : ((i === 1 || i === 3) ? 9 : 7);
+        ctx.fillStyle = (i % 2 === 0) ? '#C0392B' : '#D68910';
+        ctx.fillRect(fx - 1.5, -96 - fh, 3, fh);
+        ctx.fillStyle = '#ECF0F1';
+        ctx.fillRect(fx - 1.5, -96 - fh, 3, 2.2);
+    }
+
+    // Subtelny napis informacyjny nad Totemem Spawnu
+    ctx.font = 'bold 6.5px Arial';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'black';
+    ctx.shadowBlur = 3;
+    ctx.fillStyle = '#fde047';
+    ctx.fillText("🗿 TOTEM SPAWNU", 0, -114);
+
+    ctx.restore();
+}
+
+function draw() {
+    drawAtmosphericSky(ctx);
     
     ctx.save(); 
     ctx.scale(SCALE, SCALE);
@@ -1317,6 +1930,9 @@ function draw() {
             }
         }
     }
+
+    // Rysuj niezniszczalny Totem Aborygeński w tle na Spawnie (nie koliduje z graczami ani mobami)
+    drawSpawnAboriginalTotem(ctx);
 
     if (player.inStomach) {
         ctx.save();
@@ -1380,6 +1996,12 @@ function draw() {
             ctx.fillStyle = 'yellow'; ctx.fillRect(bomb.x + 2, bomb.y - bomb.radius - 6, 2, 2);
         });
 
+        if (typeof deers !== 'undefined') {
+            deers.forEach(d => {
+                drawDeerEntity(ctx, d);
+            });
+        }
+
         pigs.forEach(pig => {
             drawPigEntity(ctx, pig.x, pig.y, pig.width, pig.height, pig.direction || 1, pig.wingFlap, player.ridingPig === pig);
         });
@@ -1401,7 +2023,7 @@ function draw() {
 
         if (distToPlayer < maxDist) {
             let targetTile = getTile(tileX, tileY);
-            let isTargetMinable = (targetTile !== BLOCKS.AIR && targetTile !== BLOCKS.WATER && targetTile !== BLOCKS.ACID && (targetTile !== BLOCKS.STOMACH_WALL || (!player.inStomach && player.gameMode === 1)));
+            let isTargetMinable = (!isSpawnTotemBaseTile(tileX, tileY) && targetTile !== BLOCKS.AIR && targetTile !== BLOCKS.WATER && targetTile !== BLOCKS.ACID && (targetTile !== BLOCKS.STOMACH_WALL || (!player.inStomach && player.gameMode === 1)));
             let canSeeTarget = isBlockVisibleToPlayer(tileX, tileY);
             
             let currentItem = hotbar[selectedSlotIndex];
@@ -1432,8 +2054,14 @@ function draw() {
         let rp = remotePlayers[id];
         if (!rp || rp.inGame === false || Boolean(rp.inStomach) !== Boolean(player.inStomach)) continue;
 
+        let rpTint = getPlayerCharacterTint(
+            Boolean(rp.damageEffect && rp.damageEffect > 0),
+            Boolean(rp.isPoisoned || (rp.poisonDamageEffect && rp.poisonDamageEffect > 0)),
+            Boolean(rp.poisonDamageEffect && rp.poisonDamageEffect > 0)
+        );
+
         if (rp.isSandworm && !rp.dead) {
-            drawSandwormEntity(ctx, rp.x + 8, rp.y + 12, rp.wormSegments, sandworm.radius, sandworm.numSegments);
+            drawSandwormEntity(ctx, rp.x + 8, rp.y + 12, rp.wormSegments, sandworm.radius, sandworm.numSegments, rpTint);
         }
 
         drawOverheadPlayerName(ctx, rp.x + 8, rp.isSandworm ? rp.y - 11 : rp.y - 9, rp.nick || "Gracz", Boolean(rp.isAdmin), false);
@@ -1466,20 +2094,28 @@ function draw() {
                 rSkin,
                 rp.pickaxeAnim,
                 rp.isSwimming,
-                rAirborne
+                rAirborne,
+                rpTint
             );
         }
 
         if (rp.damageEffect && rp.damageEffect > 0) {
-            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
-            ctx.fillRect(rp.x - 4, rp.y, 24, 24);
             rp.damageEffect--;
+        }
+        if (rp.poisonDamageEffect && rp.poisonDamageEffect > 0) {
+            rp.poisonDamageEffect--;
         }
     }
 
-    // RYSOWANIE WŁASNEJ POSTACI (lub własnego Czerwia po wpisaniu /czerw)
+    // RYSOWANIE WŁASNEJ POSTACI (z zabarwieniem samej sylwetki postaci przy uderzeniu lub truciźnie, bez prostokątnego hitboxa!)
+    let myCharTint = getPlayerCharacterTint(
+        player.damageEffect > 0,
+        Boolean(player.inAcid || player.acidPoisonTimer > 0 || player.poisonDamageEffect > 0),
+        player.poisonDamageEffect > 0
+    );
+
     if (player.isSandworm && !player.dead) {
-        drawSandwormEntity(ctx, player.x + player.width / 2, player.y + player.height / 2, player.wormSegments, sandworm.radius, sandworm.numSegments);
+        drawSandwormEntity(ctx, player.x + player.width / 2, player.y + player.height / 2, player.wormSegments, sandworm.radius, sandworm.numSegments, myCharTint);
     }
 
     drawOverheadPlayerName(ctx, player.x + player.width / 2, player.isSandworm ? player.y - 8 : player.y - 6, playerNick || "Gracz", Boolean(player.isAdmin), true);
@@ -1499,20 +2135,15 @@ function draw() {
             SKINS[selectedSkinIndex], 
             pickaxeAnim,
             player.isSwimming,
-            isAirborne
+            isAirborne,
+            myCharTint
         );
-    }
-
-    if (player.poisonDamageEffect > 0 || player.inAcid || player.acidPoisonTimer > 0) {
-        let pulseAlpha = player.poisonDamageEffect > 0 ? 0.55 : (0.22 + Math.sin(globalTick * 0.2) * 0.10);
-        ctx.fillStyle = `rgba(132, 204, 22, ${pulseAlpha.toFixed(2)})`;
-        ctx.fillRect(player.x - 4, player.y - 2, 24, 26);
-    } else if (player.damageEffect > 0) { 
-        ctx.fillStyle = 'rgba(255, 0, 0, 0.5)'; 
-        ctx.fillRect(player.x - 4, player.y, 24, 24); 
     } 
 
     ctx.restore(); 
+
+    // Klimatyczne oświetlenie świata dopasowane do pory dnia (ciepły blask zachodu lub nocny półmrok)
+    drawAtmosphericLightingOverlay(ctx);
 
     // Filtr ekranu pod wodą, w żrącym kwasie lub wewnątrz żołądka czerwia
     if (player.inStomach && !showInventory) {
@@ -1527,6 +2158,12 @@ function draw() {
     } else if (player.headSubmerged && !showInventory) {
         ctx.fillStyle = 'rgba(10, 75, 155, 0.22)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    if (!isPlaying) {
+        // W menu głównym nie rysujemy pasków HUD, aby odsłonić żywą panoramę świata gry w tle
+        ctx.restore();
+        return;
     }
 
     if (showInventory) {
@@ -1558,6 +2195,10 @@ function draw() {
             ctx.font = 'bold 16px Arial';
             ctx.fillText(`🌐 Kod Pokoju: ${roomCode} (Gracze: ${onlineCount})`, canvas.width - 30, 90);
         }
+        let phaseInfo = getDayPhaseDisplayInfo(worldTime);
+        ctx.fillStyle = phaseInfo.color;
+        ctx.font = 'bold 15px Arial';
+        ctx.fillText(`${phaseInfo.icon} Pora dnia: ${phaseInfo.label} (${phaseInfo.clock})`, canvas.width - 30, roomCode ? 114 : 90);
         ctx.shadowBlur = 0; 
         ctx.textAlign = 'left';
 
@@ -1696,15 +2337,48 @@ function draw() {
     drawWormTransitionOverlay(ctx);
 }
 
-draw();
+// Ustaw kamerę startową na panoramę Spawnu i Totemu jeszcze przed kliknięciem "Zagraj"
+cameraX = (SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2) - (canvas.width / SCALE) / 2;
+cameraY = (surfaceHeights[SPAWN_TILE_X] * TILE_SIZE - 35) - (canvas.height / SCALE) / 2;
 
-function gameLoop() { 
-    if (isPlaying) {
-        updateEntities(); 
+function updateMenuBackgroundPanorama() {
+    globalTick++;
+    if (globalTick % 4 === 0) {
+        updateWaterPhysics(cameraX, cameraY);
     }
+    // Płynny, filmowy ruch kamery wokół Totemu Spawnu, lasu i latających świń w tle menu
+    let centerSpawnX = SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
+    let centerSpawnY = surfaceHeights[SPAWN_TILE_X] * TILE_SIZE - 38;
+    let panOffsetX = Math.sin(globalTick * 0.0045) * 140;
+    let panOffsetY = Math.cos(globalTick * 0.0035) * 14;
+    cameraX = centerSpawnX + panOffsetX - (canvas.width / SCALE) / 2;
+    cameraY = centerSpawnY + panOffsetY - (canvas.height / SCALE) / 2;
+}
+
+function gameLoop(timestamp) { 
+    if (!timestamp) timestamp = performance.now();
+    if (!lastFrameTimeMs) lastFrameTimeMs = timestamp;
+    let deltaMs = timestamp - lastFrameTimeMs;
+    lastFrameTimeMs = timestamp;
+    if (deltaMs > 100) deltaMs = 100;
+
+    frameAccumulatorMs += deltaMs;
+    let steps = 0;
+    while (frameAccumulatorMs >= FIXED_STEP_MS && steps < 4) {
+        if (isPlaying) {
+            updateEntities();
+        } else {
+            updateMenuBackgroundPanorama();
+        }
+        frameAccumulatorMs -= FIXED_STEP_MS;
+        steps++;
+    }
+
     draw(); 
     requestAnimationFrame(gameLoop); 
 }
+
+requestAnimationFrame(gameLoop);
 
 // ==========================================
 // OBSŁUGA LINKÓW ZAPROSZENIA (?room=KOD)

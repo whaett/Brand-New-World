@@ -83,8 +83,66 @@ const SKINS = [
 
 let selectedSkinIndex = 0;
 
+let activeCharTint = null; // null | { r, g, b, a }
+
+function blendColorWithTint(col, tint) {
+    if (!tint || !col || typeof col !== 'string') return col;
+    let r = 0, g = 0, b = 0, a = 1, hasAlpha = false;
+    let s = col.trim();
+    if (s.startsWith('#')) {
+        let hex = s.substring(1);
+        if (hex.length === 3) {
+            r = parseInt(hex[0] + hex[0], 16);
+            g = parseInt(hex[1] + hex[1], 16);
+            b = parseInt(hex[2] + hex[2], 16);
+        } else if (hex.length >= 6) {
+            r = parseInt(hex.substring(0, 2), 16);
+            g = parseInt(hex.substring(2, 4), 16);
+            b = parseInt(hex.substring(4, 6), 16);
+        } else {
+            return col;
+        }
+    } else if (s.startsWith('rgb')) {
+        let m = s.match(/[\d.]+/g);
+        if (!m || m.length < 3) return col;
+        r = parseFloat(m[0]);
+        g = parseFloat(m[1]);
+        b = parseFloat(m[2]);
+        if (m.length >= 4) {
+            a = parseFloat(m[3]);
+            hasAlpha = true;
+        }
+    } else {
+        return col;
+    }
+
+    let ta = tint.a;
+    let nr = Math.round(r * (1 - ta) + tint.r * ta);
+    let ng = Math.round(g * (1 - ta) + tint.g * ta);
+    let nb = Math.round(b * (1 - ta) + tint.b * ta);
+    if (hasAlpha) {
+        return `rgba(${nr}, ${ng}, ${nb}, ${a})`;
+    }
+    return `rgb(${nr}, ${ng}, ${nb})`;
+}
+
+// Oblicza zabarwienie samej postaci (czerwonawe przy uderzeniu, zielonkawe przy truciźnie kwasu)
+function getPlayerCharacterTint(isHit, isPoisoned, isPoisonHit = false) {
+    if (isHit) {
+        return { r: 255, g: 42, b: 42, a: 0.58 };
+    }
+    if (isPoisoned) {
+        if (isPoisonHit) {
+            return { r: 115, g: 245, b: 30, a: 0.60 };
+        }
+        let pulse = 0.42 + Math.sin((typeof globalTick !== 'undefined' ? globalTick : 0) * 0.2) * 0.08;
+        return { r: 120, g: 225, b: 35, a: pulse };
+    }
+    return null;
+}
+
 function drawRect(c, x, y, w, h, col) { 
-    c.fillStyle = col; 
+    c.fillStyle = activeCharTint ? blendColorWithTint(col, activeCharTint) : col; 
     c.fillRect(x, y, w, h); 
 }
 
@@ -106,7 +164,8 @@ function drawLegAndShoe(ctx, s, isBack) {
     drawRect(ctx, -2.2, 7.3, 5.4, 0.7, s.shoeSole || '#111111');
 }
 
-function drawCharacter(ctx, x, y, direction, walkPhase, isDead, isRiding, s, pickaxeAnim, isSwimming = false, isAirborne = false) {
+function drawCharacter(ctx, x, y, direction, walkPhase, isDead, isRiding, s, pickaxeAnim, isSwimming = false, isAirborne = false, tintEffect = null) {
+    activeCharTint = tintEffect;
     ctx.save();
     ctx.translate(x, y);
     if (isDead) {
@@ -198,24 +257,20 @@ function drawCharacter(ctx, x, y, direction, walkPhase, isDead, isRiding, s, pic
         drawRect(ctx, -2.6, 0.6, 2.0, 2.0, '#1E40AF');
     } else if (s.type === 'lumberjack_plaid') {
         drawRect(ctx, -3.2, -4, 6.4, 8, s.topMain);
-        ctx.fillStyle = '#64748B';
-        for (let py = -4; py < 4; py += 2) ctx.fillRect(-3.2, py, 6.4, 1);
-        for (let px = -3; px < 3; px += 2) ctx.fillRect(px, -4, 1, 8);
-        ctx.fillStyle = s.topSec;
+        for (let py = -4; py < 4; py += 2) drawRect(ctx, -3.2, py, 6.4, 1, '#64748B');
+        for (let px = -3; px < 3; px += 2) drawRect(ctx, px, -4, 1, 8, '#64748B');
         for (let py = -4; py < 4; py += 2) {
             for (let px = -3; px < 3; px += 2) {
-                ctx.fillRect(px, py, 1.1, 1.1);
+                drawRect(ctx, px, py, 1.1, 1.1, s.topSec);
             }
         }
         drawRect(ctx, -2.0, -4.5, 4.2, 1.0, s.topSec);
     } else if (s.type === 'blue_white_shirt') {
         drawRect(ctx, -3.2, -4, 6.4, 8, s.topMain);
-        ctx.fillStyle = 'rgba(41, 128, 185, 0.45)';
-        for (let py = -4; py < 4; py += 2) ctx.fillRect(-3.2, py, 6.4, 1);
-        ctx.fillStyle = s.topSec;
+        for (let py = -4; py < 4; py += 2) drawRect(ctx, -3.2, py, 6.4, 1, 'rgba(41, 128, 185, 0.45)');
         for (let py = -4; py < 4; py += 2) {
             for (let px = -3; px < 3; px += 2) {
-                ctx.fillRect(px, py, 1.1, 1.1);
+                drawRect(ctx, px, py, 1.1, 1.1, s.topSec);
             }
         }
         drawRect(ctx, -2.2, -4.5, 4.4, 1.0, s.topSec);
@@ -336,6 +391,7 @@ function drawCharacter(ctx, x, y, direction, walkPhase, isDead, isRiding, s, pic
         }
     }
 
+    activeCharTint = null;
     if (pickaxeAnim !== null && !isDead && !isRiding) {
         ctx.translate(0, 6);
         drawRect(ctx, -1, -12, 2, 16, '#8B4513'); 

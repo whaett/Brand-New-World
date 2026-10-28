@@ -479,7 +479,7 @@ function drawInventoryUI(ctx) {
         ctx.save();
         ctx.translate(L.startX + 148, L.startY + 170); 
         ctx.scale(5, 5); 
-        drawCharacter(ctx, 0, 0, 1, 0, false, false, SKINS[selectedSkinIndex], null, false, false);
+        drawCharacter(ctx, 0, 0, 1, 0, false, false, SKINS[selectedSkinIndex], null, false, false, (typeof getPlayerCharacterTint === 'function') ? getPlayerCharacterTint(player.damageEffect > 0, Boolean(player.inAcid || player.acidPoisonTimer > 0 || player.poisonDamageEffect > 0), player.poisonDamageEffect > 0) : null);
         ctx.restore();
 
         ctx.fillStyle = '#333';
@@ -596,7 +596,7 @@ function drawInventoryUI(ctx) {
     ctx.save();
     ctx.translate(L.startX + 155, L.startY + 170); 
     ctx.scale(5, 5); 
-    drawCharacter(ctx, 0, 0, 1, 0, false, false, SKINS[selectedSkinIndex], null, false, false);
+    drawCharacter(ctx, 0, 0, 1, 0, false, false, SKINS[selectedSkinIndex], null, false, false, (typeof getPlayerCharacterTint === 'function') ? getPlayerCharacterTint(player.damageEffect > 0, Boolean(player.inAcid || player.acidPoisonTimer > 0 || player.poisonDamageEffect > 0), player.poisonDamageEffect > 0) : null);
     ctx.restore();
     
     ctx.fillStyle = '#333';
