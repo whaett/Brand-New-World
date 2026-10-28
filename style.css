@@ -377,14 +377,78 @@ body {
     font-family: Consolas, monospace;
 }
 
+.chat-prefix {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-right: 5px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    vertical-align: baseline;
+    text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.8);
+}
+
+.chat-prefix.player {
+    background: rgba(100, 116, 139, 0.45);
+    color: #cbd5e1;
+    border: 1px solid #94a3b8;
+}
+
+.chat-prefix.admin {
+    background: linear-gradient(135deg, #dc2626, #991b1b);
+    color: #ffffff;
+    border: 1px solid #f87171;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.55);
+}
+
 .chat-nick {
     font-weight: bold;
     color: #38bdf8;
     margin-right: 5px;
 }
 
+.chat-nick.admin-nick {
+    color: #ff7675;
+}
+
+.chat-msg.admin-chat {
+    border-left-color: #ef4444;
+}
+
 .chat-msg.whisper .chat-nick {
     color: #e879f9;
+}
+
+.chat-msg.broadcast {
+    border-left: 4px solid #38bdf8;
+    border-right: 2px solid #f59e0b;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(41, 128, 185, 0.45));
+    box-shadow: 0 2px 12px rgba(56, 189, 248, 0.35);
+    padding: 7px 11px;
+}
+
+.chat-prefix.game-bc {
+    background: linear-gradient(135deg, #2980b9, #1d4ed8);
+    color: #fde047;
+    border: 1px solid #fff;
+    box-shadow: 1px 1px 6px rgba(0, 0, 0, 0.8);
+}
+
+.chat-nick.game-bc-nick {
+    font-weight: 900;
+    font-size: 14.5px;
+    letter-spacing: 0.6px;
+    color: #38bdf8;
+    text-shadow: 2px 2px 0px #000000, 0 0 8px rgba(56, 189, 248, 0.55);
+    margin-right: 6px;
+}
+
+.chat-broadcast-text {
+    color: #fef08a;
+    font-weight: 700;
+    text-shadow: 1px 1px 2px #000;
 }
 
 /* LISTA PODPOWIEDZI NICKÓW (AUTOCOMPLETE) */

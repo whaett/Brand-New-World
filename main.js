@@ -26,24 +26,44 @@ function formatTimeHHMM() {
     return `${hh}:${mm}`;
 }
 
-function addChatMessage(nick, text, msgType = 'chat') {
+function addChatMessage(nick, text, msgType = 'chat', isAdminSender = false) {
     if (!chatMessagesEl) return;
     const msgDiv = document.createElement('div');
-    msgDiv.className = 'chat-msg ' + (msgType || 'chat');
+    msgDiv.className = 'chat-msg ' + (msgType || 'chat') + (isAdminSender && msgType === 'chat' ? ' admin-chat' : '');
 
     const timeSpan = document.createElement('span');
     timeSpan.className = 'chat-time';
     timeSpan.innerText = `[${formatTimeHHMM()}]`;
     msgDiv.appendChild(timeSpan);
 
-    if (nick) {
+    if (msgType === 'broadcast') {
+        const prefixSpan = document.createElement('span');
+        prefixSpan.className = 'chat-prefix game-bc';
+        prefixSpan.innerText = '🌍 GRA';
+        msgDiv.appendChild(prefixSpan);
+
         const nickSpan = document.createElement('span');
-        nickSpan.className = 'chat-nick';
+        nickSpan.className = 'chat-nick game-bc-nick';
+        nickSpan.innerText = 'BRAND NEW WORLD:';
+        msgDiv.appendChild(nickSpan);
+    } else if (nick) {
+        if (msgType === 'chat') {
+            const prefixSpan = document.createElement('span');
+            prefixSpan.className = 'chat-prefix ' + (isAdminSender ? 'admin' : 'player');
+            prefixSpan.innerText = isAdminSender ? 'ADMIN' : 'Gracz';
+            msgDiv.appendChild(prefixSpan);
+        }
+
+        const nickSpan = document.createElement('span');
+        nickSpan.className = 'chat-nick' + (isAdminSender && msgType === 'chat' ? ' admin-nick' : '');
         nickSpan.innerText = nick.endsWith(':') ? nick : `${nick}:`;
         msgDiv.appendChild(nickSpan);
     }
 
     const textSpan = document.createElement('span');
+    if (msgType === 'broadcast') {
+        textSpan.className = 'chat-broadcast-text';
+    }
     textSpan.innerText = text;
     msgDiv.appendChild(textSpan);
 
@@ -119,7 +139,7 @@ if (btnContextCloseEl) {
 function findRemotePlayerAtWorldPos(wx, wy) {
     for (let id in remotePlayers) {
         let rp = remotePlayers[id];
-        if (!rp || rp.inGame === false) continue;
+        if (!rp || rp.inGame === false || Boolean(rp.inStomach) !== Boolean(player.inStomach)) continue;
         if (wx >= rp.x - 12 && wx <= rp.x + 28 && wy >= rp.y - 14 && wy <= rp.y + 34) {
             return { id: id, nick: rp.nick || "Gracz" };
         }
@@ -167,8 +187,8 @@ function updateCommandSuggestions() {
             }
         }
     }
-    // 2. Podpowiadanie nicków dla /unpig DOPIERO po wpisaniu całego "/unpig" (komenda pozostaje tajna przy wpisaniu "/"!)
-    else if (lowerVal === '/unpig' || lowerVal.startsWith('/unpig ')) {
+    // 2. Podpowiadanie nicków dla /unpig wyłącznie dla graczy z rangą ADMIN!
+    else if (player.isAdmin && (lowerVal === '/unpig' || lowerVal.startsWith('/unpig '))) {
         let afterCmd = val.substring(6).trimStart();
         if (!afterCmd.includes(' ')) {
             let filterLower = afterCmd.toLowerCase();
@@ -326,28 +346,64 @@ function submitChatOrCommand() {
         let baseCmd = parts[0].toLowerCase();
         let restArgs = rawText.substring(parts[0].length).trim();
 
-        if (baseCmd === '/pig') {
+        if (baseCmd === '/getadmin') {
+            if (restArgs === 'kox') {
+                if (player.isAdmin) {
+                    showSystemNotification("👑 Już jesteś Adminem!", "#ffeb3b", 210, true);
+                } else {
+                    player.isAdmin = true;
+                    showSystemNotification("👑 Odblokowano rangę ADMIN! Masz teraz dostęp do komend administratora.", "#4caf50", 240, true);
+                    if (typeof sendPlayerState === 'function') sendPlayerState();
+                }
+            } else {
+                showSystemNotification("Błędne hasło! Użycie: /getAdmin [hasło]", "#ff5252", 210, true);
+            }
+        } else if (baseCmd === '/bc' || baseCmd === '/broadcast') {
+            if (!player.isAdmin) {
+                showSystemNotification("Brak takiej komendy: " + parts[0], "#ff5252", 210, true);
+            } else if (!restArgs) {
+                showSystemNotification("Użycie: /bc [wiadomość] lub /broadcast [wiadomość]", "#ff5252", 210, true);
+            } else {
+                addChatMessage("BRAND NEW WORLD", restArgs, 'broadcast', true);
+                if (typeof sendChatMessagePacket === 'function') {
+                    sendChatMessagePacket(restArgs, 'broadcast');
+                }
+            }
+        } else if (baseCmd === '/pig') {
+            // /pig jest dostępne dla każdego gracza
             spawnAndMountPigCommand();
         } else if (baseCmd === '/czerw' || baseCmd === '/worm' || baseCmd === '/sandworm') {
-            toggleSandwormMode();
-        } else if (baseCmd === '/unpig') {
-            executeUnpigCommand(restArgs);
-        } else if (baseCmd === '/gm' || baseCmd === '/gamemode') {
-            let modeArg = restArgs.toLowerCase();
-            if (modeArg === '1' || modeArg === 'creative' || modeArg === 'c') {
-                setPlayerGameMode(1);
-            } else if (modeArg === '0' || modeArg === 'survival' || modeArg === 's') {
-                setPlayerGameMode(0);
+            if (!player.isAdmin) {
+                showSystemNotification("Brak takiej komendy: " + parts[0], "#ff5252", 210, true);
             } else {
-                showSystemNotification("Użycie: /gm 1 (Kreatywny) lub /gm 0 (Przetrwanie)", "#ff5252", 210, true);
+                toggleSandwormMode();
+            }
+        } else if (baseCmd === '/unpig') {
+            if (!player.isAdmin) {
+                showSystemNotification("Brak takiej komendy: " + parts[0], "#ff5252", 210, true);
+            } else {
+                executeUnpigCommand(restArgs);
+            }
+        } else if (baseCmd === '/gm' || baseCmd === '/gamemode') {
+            if (!player.isAdmin) {
+                showSystemNotification("Brak takiej komendy: " + parts[0], "#ff5252", 210, true);
+            } else {
+                let modeArg = restArgs.toLowerCase();
+                if (modeArg === '1' || modeArg === 'creative' || modeArg === 'c') {
+                    setPlayerGameMode(1);
+                } else if (modeArg === '0' || modeArg === 'survival' || modeArg === 's') {
+                    setPlayerGameMode(0);
+                } else {
+                    showSystemNotification("Użycie: /gm 1 (Kreatywny) lub /gm 0 (Przetrwanie)", "#ff5252", 210, true);
+                }
             }
         } else if (baseCmd === '/msg' || baseCmd === '/w' || baseCmd === '/tell') {
             executeWhisperCommand(restArgs);
         } else {
-            showSystemNotification("Brak takiej komendy: " + baseCmd, "#ff5252", 210, true);
+            showSystemNotification("Brak takiej komendy: " + parts[0], "#ff5252", 210, true);
         }
     } else {
-        addChatMessage(playerNick || "Gracz", rawText, 'chat');
+        addChatMessage(playerNick || "Gracz", rawText, 'chat', Boolean(player.isAdmin));
         if (typeof sendChatMessagePacket === 'function') {
             sendChatMessagePacket(rawText, 'chat');
         }
@@ -404,6 +460,13 @@ window.addEventListener('keydown', e => {
         return;
     }
 
+    // Lista graczy online pod klawiszem [TAB] (blokujemy domyślne przeskakiwanie fokusu w przeglądarce)
+    if (e.code === 'Tab' && isPlaying) {
+        e.preventDefault();
+        keys['Tab'] = true;
+        return;
+    }
+
     // Otwieranie czatu klawiszem [T] podczas rozgrywki
     if (e.code === 'KeyT' && isPlaying && !player.dead && !showInventory) {
         e.preventDefault();
@@ -449,7 +512,14 @@ window.addEventListener('keydown', e => {
 });
 
 window.addEventListener('keyup', e => {
+    if (e.code === 'Tab' && isPlaying) {
+        e.preventDefault();
+    }
     keys[e.code] = false;
+});
+
+window.addEventListener('blur', () => {
+    for (let k in keys) keys[k] = false;
 });
 
 function launchGameLoop() {
@@ -575,6 +645,14 @@ document.getElementById('respawnBtn').addEventListener('click', () => {
     player.ridingPig = null;
     player.isSandworm = false;
     player.wormSegments = [];
+    player.inStomach = false;
+    player.inAcid = false;
+    player.acidTimer = 0;
+    player.acidPoisonTimer = 0;
+    player.poisonDamageEffect = 0;
+    if (typeof wormTransition !== 'undefined') wormTransition.active = false;
+    player.swallowedByNick = null;
+    player.swallowedById = null;
     player.isSwimming = false;
     player.swimToggle = false;
     player.air = player.maxAir;
@@ -642,10 +720,11 @@ canvas.addEventListener('mouseleave', e => {
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-function drawPixelHeart(ctx, x, y, size, isFull) {
+function drawPixelHeart(ctx, x, y, size, isFull, isPoisoned = false, heartIndex = 0) {
     const px = size / 8; 
     ctx.save();
-    ctx.translate(x, y);
+    let bobY = isPoisoned ? Math.sin(globalTick * 0.22 + heartIndex * 0.9) * 2.8 : 0;
+    ctx.translate(x, y + bobY);
     
     let pattern = [
         ".XX..XX.",
@@ -656,6 +735,8 @@ function drawPixelHeart(ctx, x, y, size, isFull) {
         "...XX..."
     ];
     
+    let animPhase = Math.floor(globalTick / 5);
+
     for(let row=0; row<6; row++) {
         for(let col=0; col<8; col++) {
             if(pattern[row][col] === 'X') {
@@ -666,19 +747,180 @@ function drawPixelHeart(ctx, x, y, size, isFull) {
                                (row<5 && pattern[row+1][col] === '.');
                 
                 if (isBorder) {
-                    ctx.fillStyle = '#000000';
+                    ctx.fillStyle = isPoisoned ? '#052e16' : '#000000';
                 } else {
-                    if(isFull) {
-                        if (row===1 && col===2) ctx.fillStyle = '#ff9999';
-                        else ctx.fillStyle = '#e74c3c';
+                    if (isFull) {
+                        if (isPoisoned) {
+                            if (row===1 && col===2) {
+                                ctx.fillStyle = '#d9f99d';
+                            } else if ((row + col + animPhase + heartIndex) % 4 === 0) {
+                                ctx.fillStyle = '#a3e635';
+                            } else {
+                                ctx.fillStyle = (animPhase % 2 === 0) ? '#22c55e' : '#65a30d';
+                            }
+                        } else {
+                            if (row===1 && col===2) ctx.fillStyle = '#ff9999';
+                            else ctx.fillStyle = '#e74c3c';
+                        }
                     } else {
-                        ctx.fillStyle = '#333333';
+                        ctx.fillStyle = isPoisoned ? '#14331b' : '#333333';
                     }
                 }
                 ctx.fillRect(col*px, row*px, px, px);
             }
         }
     }
+    ctx.restore();
+}
+
+// Pełnoekranowa animacja zjadania przez Czerwia ('swallow') oraz wychodzenia/wyplucia z niego ('spit_out')
+function drawWormTransitionOverlay(ctx) {
+    if (typeof wormTransition === 'undefined' || !wormTransition.active) return;
+    const p = Math.min(1, Math.max(0, wormTransition.timer / wormTransition.maxTimer));
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const maxR = Math.hypot(cx, cy) * 1.15;
+
+    ctx.save();
+
+    if (wormTransition.type === 'swallow') {
+        // Faza 1 (0.0 -> 0.50): Wielka zębata paszcza Czerwia zaciska się wokół ekranu
+        // Faza 2 (0.50 -> 1.0): Przelot przez pulsujący przełyk i otwarcie widoku wewnątrz Żołądka
+        let jawOpenRatio;
+        let alpha = 1.0;
+        if (p < 0.50) {
+            let t = p / 0.50;
+            jawOpenRatio = 1.0 - Math.pow(t, 1.4) * 0.92;
+        } else {
+            let t = (p - 0.50) / 0.50;
+            jawOpenRatio = 0.08 + Math.pow(t, 1.5) * 1.12;
+            alpha = 1.0 - Math.pow(t, 1.8);
+        }
+
+        let holeR = Math.max(12, maxR * jawOpenRatio);
+        let shakeX = Math.sin(wormTransition.timer * 1.8) * (1 - p) * 10;
+        let shakeY = Math.cos(wormTransition.timer * 2.1) * (1 - p) * 10;
+
+        ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+
+        // Ciemno-szkarłatna gardziel wokół zamykającej się paszczy
+        ctx.fillStyle = '#260409';
+        ctx.beginPath();
+        ctx.rect(0, 0, canvas.width, canvas.height);
+        ctx.arc(cx + shakeX, cy + shakeY, holeR, 0, Math.PI * 2, true);
+        ctx.fill();
+
+        // Pierścienie przełyku i skóry Czerwia wokół otworu
+        for (let rIdx = 3; rIdx >= 1; rIdx--) {
+            ctx.strokeStyle = (rIdx % 2 === 0) ? '#5C4033' : '#7f1d1d';
+            ctx.lineWidth = 18 * rIdx;
+            ctx.beginPath();
+            ctx.arc(cx + shakeX, cy + shakeY, holeR + rIdx * 22, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        // 24 ostre białe zęby Czerwia obracające się do środka
+        const numTeeth = 24;
+        const toothLen = Math.min(68, Math.max(22, holeR * 0.38));
+        for (let i = 0; i < numTeeth; i++) {
+            let angle = (i / numTeeth) * Math.PI * 2 + wormTransition.timer * 0.035;
+            let baseAngle1 = angle - 0.085;
+            let baseAngle2 = angle + 0.085;
+            let bx1 = cx + shakeX + Math.cos(baseAngle1) * (holeR + 8);
+            let by1 = cy + shakeY + Math.sin(baseAngle1) * (holeR + 8);
+            let bx2 = cx + shakeX + Math.cos(baseAngle2) * (holeR + 8);
+            let by2 = cy + shakeY + Math.sin(baseAngle2) * (holeR + 8);
+            let tipX = cx + shakeX + Math.cos(angle) * Math.max(2, holeR - toothLen);
+            let tipY = cy + shakeY + Math.sin(angle) * Math.max(2, holeR - toothLen);
+
+            ctx.fillStyle = '#f8fafc';
+            ctx.beginPath();
+            ctx.moveTo(bx1, by1);
+            ctx.lineTo(bx2, by2);
+            ctx.lineTo(tipX, tipY);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        // Napis informujący o pożarciu
+        if (p > 0.15 && p < 0.88) {
+            ctx.fillStyle = '#fde047';
+            ctx.font = 'bold 28px Arial';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = 'black';
+            ctx.shadowBlur = 8;
+            ctx.fillText(`🪱 POŻARTY PRZEZ: ${(wormTransition.eaterNick || "CZERWIA").toUpperCase()}!`, cx, cy - holeR * 0.35 - 20);
+            ctx.fillStyle = '#fca5a5';
+            ctx.font = 'bold 16px Arial';
+            ctx.fillText("Trafiasz do Żołądka Czerwia — uważaj na żrący kwas!", cx, cy - holeR * 0.35 + 10);
+        }
+    } else if (wormTransition.type === 'spit_out') {
+        // Animacja wyplucia z przełyku Czerwia na powierzchnię
+        let jawOpenRatio;
+        let alpha = 1.0;
+        if (p < 0.28) {
+            let t = p / 0.28;
+            jawOpenRatio = 0.25 - t * 0.15;
+        } else {
+            let t = (p - 0.28) / 0.72;
+            jawOpenRatio = 0.10 + Math.pow(t, 1.35) * 1.15;
+            alpha = 1.0 - Math.pow(t, 1.5);
+        }
+
+        let holeR = Math.max(16, maxR * jawOpenRatio);
+        let shakeX = Math.sin(wormTransition.timer * 2.0) * (1 - p) * 8;
+        let shakeY = Math.cos(wormTransition.timer * 2.3) * (1 - p) * 8;
+
+        ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+
+        ctx.fillStyle = '#3b0910';
+        ctx.beginPath();
+        ctx.rect(0, 0, canvas.width, canvas.height);
+        ctx.arc(cx + shakeX, cy + shakeY, holeR, 0, Math.PI * 2, true);
+        ctx.fill();
+
+        // Zielonkawy pierścień kwasu i paszczy przy wypluciu
+        ctx.strokeStyle = '#84cc16';
+        ctx.lineWidth = 10;
+        ctx.beginPath();
+        ctx.arc(cx + shakeX, cy + shakeY, holeR + 6, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const numTeeth = 22;
+        const toothLen = Math.min(60, Math.max(20, holeR * 0.32));
+        for (let i = 0; i < numTeeth; i++) {
+            let angle = (i / numTeeth) * Math.PI * 2 - wormTransition.timer * 0.03;
+            let baseAngle1 = angle - 0.08;
+            let baseAngle2 = angle + 0.08;
+            let bx1 = cx + shakeX + Math.cos(baseAngle1) * (holeR + 8);
+            let by1 = cy + shakeY + Math.sin(baseAngle1) * (holeR + 8);
+            let bx2 = cx + shakeX + Math.cos(baseAngle2) * (holeR + 8);
+            let by2 = cy + shakeY + Math.sin(baseAngle2) * (holeR + 8);
+            let tipX = cx + shakeX + Math.cos(angle) * Math.max(4, holeR - toothLen);
+            let tipY = cy + shakeY + Math.sin(angle) * Math.max(4, holeR - toothLen);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(bx1, by1);
+            ctx.lineTo(bx2, by2);
+            ctx.lineTo(tipX, tipY);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        if (p > 0.12 && p < 0.85) {
+            ctx.fillStyle = '#a3e635';
+            ctx.font = 'bold 28px Arial';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = 'black';
+            ctx.shadowBlur = 8;
+            ctx.fillText("🪱 WYPLUTY Z PASZCZY CZERWIA!", cx, cy - 30);
+        }
+    }
+
     ctx.restore();
 }
 
@@ -768,24 +1010,285 @@ function drawSandwormEntity(ctx, headX, headY, segments, radius = 12, numSegment
     }
 }
 
+// ==========================================
+// MINI ZNACZNIKI GRACZY POZA EKRANEM ORAZ LISTA GRACZY [TAB]
+// ==========================================
+function getDirectionArrowChar(dx, dy) {
+    let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    if (angle >= -22.5 && angle < 22.5) return "▶";
+    if (angle >= 22.5 && angle < 67.5) return "↘";
+    if (angle >= 67.5 && angle < 112.5) return "▼";
+    if (angle >= 112.5 && angle < 157.5) return "↙";
+    if (angle >= -67.5 && angle < -22.5) return "↗";
+    if (angle >= -112.5 && angle < -67.5) return "▲";
+    if (angle >= -157.5 && angle < -112.5) return "↖";
+    return "◀";
+}
+
+function drawOffscreenPlayerMarkers(ctx) {
+    if (!roomCode) return;
+    const myCenterX = player.x + player.width / 2;
+    const myCenterY = player.y + player.height / 2;
+    const margin = 18;
+
+    for (let id in remotePlayers) {
+        let rp = remotePlayers[id];
+        if (!rp || rp.inGame === false) continue;
+        // Gracze w żołądku czerwia są w innym wymiarze i są niewidoczni dla świata zewnętrznego
+        if (Boolean(rp.inStomach) !== Boolean(player.inStomach)) continue;
+
+        let rpCenterX = rp.x + 8;
+        let rpCenterY = rp.y + 12;
+
+        // Pozycja gracza na ekranie w pikselach
+        let screenX = (rpCenterX - cameraX) * SCALE;
+        let screenY = (rpCenterY - cameraY) * SCALE;
+
+        // Jeśli gracz mieści się w polu widzenia kamery, nie rysujemy znacznika krawędziowego
+        if (screenX >= margin && screenX <= canvas.width - margin &&
+            screenY >= margin && screenY <= canvas.height - margin) {
+            continue;
+        }
+
+        let dx = rpCenterX - myCenterX;
+        let dy = rpCenterY - myCenterY;
+        let distBlocks = Math.max(1, Math.round(Math.hypot(dx, dy) / TILE_SIZE));
+        let arrowChar = getDirectionArrowChar(dx, dy);
+        let isLeft = screenX < margin;
+        let isRight = screenX > canvas.width - margin;
+
+        ctx.save();
+        ctx.font = 'bold 12px "Segoe UI", Arial, sans-serif';
+        let nickStr = rp.nick || "Gracz";
+        let distStr = `${distBlocks}m`;
+        let labelText = isLeft
+            ? `${arrowChar} ${nickStr} (${distStr})`
+            : (isRight ? `${nickStr} (${distStr}) ${arrowChar}` : `${arrowChar} ${nickStr} (${distStr})`);
+
+        let textW = ctx.measureText(labelText).width;
+        let boxW = Math.ceil(textW + 20);
+        let boxH = 26;
+
+        // Przytnij pozycję znacznika do końca ekranu, zachowując wysokość (Y) na której znajduje się gracz!
+        let padX = boxW / 2 + 12;
+        let padY = boxH / 2 + 14;
+        let clampedX = Math.max(padX, Math.min(canvas.width - padX, screenX));
+        let clampedY = Math.max(padY, Math.min(canvas.height - padY - 75, screenY));
+
+        let boxX = Math.round(clampedX - boxW / 2);
+        let boxY = Math.round(clampedY - boxH / 2);
+
+        // Półprzezroczyste tło mini-znacznika
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+
+        ctx.strokeStyle = rp.isAdmin ? '#ef4444' : '#38bdf8';
+        ctx.lineWidth = 1.8;
+        ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+        // Rysuj tekst znacznika (kierunek, nick oraz odległość w blokach/metrach)
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.shadowColor = 'black';
+        ctx.shadowBlur = 3;
+        ctx.fillStyle = rp.isAdmin ? '#ff7675' : '#e0f2fe';
+        ctx.fillText(labelText, clampedX, clampedY);
+
+        ctx.restore();
+    }
+}
+
+function drawTabPlayerList(ctx) {
+    if (!keys['Tab']) return;
+
+    // Zbierz listę graczy online (nas oraz wszystkich z remotePlayers)
+    const playersList = [];
+    const myBlockX = Math.floor((player.x + player.width / 2) / TILE_SIZE);
+    const myBlockY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
+
+    playersList.push({
+        nick: playerNick || "Gracz",
+        isAdmin: Boolean(player.isAdmin),
+        isMe: true,
+        hp: player.hp,
+        maxHp: player.maxHp || 5,
+        dead: Boolean(player.dead),
+        gameMode: player.gameMode || 0,
+        isSandworm: Boolean(player.isSandworm),
+        isRiding: Boolean(player.ridingPig),
+        inStomach: Boolean(player.inStomach),
+        dist: 0,
+        bx: myBlockX,
+        by: myBlockY
+    });
+
+    for (let id in remotePlayers) {
+        let rp = remotePlayers[id];
+        if (!rp || rp.inGame === false) continue;
+        let rbx = Math.floor((rp.x + 8) / TILE_SIZE);
+        let rby = Math.floor((rp.y + 12) / TILE_SIZE);
+        let d = Math.round(Math.hypot(rbx - myBlockX, rby - myBlockY));
+        playersList.push({
+            nick: rp.nick || "Gracz",
+            isAdmin: Boolean(rp.isAdmin),
+            isMe: false,
+            hp: typeof rp.hp === 'number' ? rp.hp : 5,
+            maxHp: rp.maxHp || 5,
+            dead: Boolean(rp.dead),
+            gameMode: rp.gameMode || 0,
+            isSandworm: Boolean(rp.isSandworm),
+            isRiding: Boolean(rp.isRiding),
+            inStomach: Boolean(rp.inStomach),
+            dist: d,
+            bx: rbx,
+            by: rby
+        });
+    }
+
+    // Sortuj: najpierw Admini, potem alfabetycznie
+    playersList.sort((a, b) => {
+        if (a.isAdmin !== b.isAdmin) return (b.isAdmin ? 1 : 0) - (a.isAdmin ? 1 : 0);
+        if (a.isMe !== b.isMe) return (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0);
+        return a.nick.localeCompare(b.nick);
+    });
+
+    const panelW = 340;
+    const rowH = 32;
+    const headerH = 44;
+    const panelH = headerH + playersList.length * rowH + 12;
+    // Umieść półprzezroczysty panel po prawej stronie ekranu
+    const panelX = canvas.width - panelW - 26;
+    const panelY = 148;
+
+    ctx.save();
+
+    // Tło główne listy [TAB] (półprzezroczyste)
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.76)';
+    ctx.fillRect(panelX, panelY, panelW, panelH);
+
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(panelX, panelY, panelW, panelH);
+
+    // Pasek nagłówka
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.85)';
+    ctx.fillRect(panelX + 2, panelY + 2, panelW - 4, headerH - 4);
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 14px "Segoe UI", Arial, sans-serif';
+    ctx.textAlign = 'left';
+    let roomLabel = roomCode ? `Pokój #${roomCode}` : "Gra Lokalna";
+    ctx.fillText(`👥 GRACZE ONLINE (${playersList.length})`, panelX + 14, panelY + 26);
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 12px "Segoe UI", Arial, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(roomLabel, panelX + panelW - 14, panelY + 26);
+
+    // Wiersze poszczególnych graczy
+    for (let i = 0; i < playersList.length; i++) {
+        let p = playersList[i];
+        let ry = panelY + headerH + i * rowH;
+
+        if (i % 2 === 1) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+            ctx.fillRect(panelX + 4, ry, panelW - 8, rowH - 2);
+        }
+
+        // Badge rangi (ADMIN / Gracz)
+        let badgeX = panelX + 12;
+        let badgeY = ry + 6;
+        let badgeW = p.isAdmin ? 52 : 46;
+        let badgeH = 18;
+
+        ctx.fillStyle = p.isAdmin ? 'rgba(220, 38, 38, 0.85)' : 'rgba(100, 116, 139, 0.55)';
+        ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+        ctx.strokeStyle = p.isAdmin ? '#f87171' : '#94a3b8';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+
+        ctx.fillStyle = p.isAdmin ? '#ffffff' : '#e2e8f0';
+        ctx.font = 'bold 10px "Segoe UI", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.isAdmin ? "ADMIN" : "GRACZ", badgeX + badgeW / 2, badgeY + 13);
+
+        // Nick gracza
+        ctx.textAlign = 'left';
+        ctx.font = 'bold 13px "Segoe UI", Arial, sans-serif';
+        ctx.fillStyle = p.isAdmin ? '#ff7675' : (p.isMe ? '#ffffff' : '#38bdf8');
+        let displayNick = p.nick + (p.isMe ? " (Ty)" : "");
+        ctx.fillText(displayNick, badgeX + badgeW + 8, ry + 19);
+
+        // Status / Dystans po prawej stronie wiersza
+        ctx.textAlign = 'right';
+        ctx.font = '12px "Segoe UI", Arial, sans-serif';
+        let statusParts = [];
+        if (p.dead) statusParts.push("☠️");
+        else if (p.inStomach) statusParts.push("🧪 Żołądek");
+        else if (p.isSandworm) statusParts.push("🪱 Czerw");
+        else if (p.isRiding) statusParts.push("🐷");
+
+        if (p.gameMode === 1) statusParts.push("✨ GM 1");
+        else if (!p.dead) statusParts.push(`❤️ ${p.hp}/${p.maxHp}`);
+
+        if (!p.isMe && !p.inStomach && !player.inStomach) {
+            statusParts.push(`📍 ${p.dist}m`);
+        }
+
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(statusParts.join("  "), panelX + panelW - 12, ry + 19);
+    }
+
+    ctx.restore();
+}
+
+function drawOverheadPlayerName(ctx, centerX, yPos, nick, isAdmin, isLocalPlayer) {
+    ctx.save();
+    ctx.font = 'bold 7.5px Arial';
+    ctx.shadowColor = 'black';
+    ctx.shadowBlur = 2;
+    let prefixText = isAdmin ? "ADMIN " : "Gracz ";
+    let nameText = nick || "Gracz";
+    let wPrefix = ctx.measureText(prefixText).width;
+    let wName = ctx.measureText(nameText).width;
+    let totalW = wPrefix + wName;
+    let startX = centerX - totalW / 2;
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = isAdmin ? '#ef4444' : '#94a3b8';
+    ctx.fillText(prefixText, startX, yPos);
+
+    ctx.fillStyle = isAdmin ? '#ff7675' : (isLocalPlayer ? '#ffffff' : '#38bdf8');
+    ctx.fillText(nameText, startX + wPrefix, yPos);
+    ctx.restore();
+}
+
 function draw() {
-    ctx.fillStyle = COLORS[BLOCKS.AIR]; 
+    ctx.fillStyle = player.inStomach ? '#22060B' : COLORS[BLOCKS.AIR]; 
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
     ctx.save(); 
     ctx.scale(SCALE, SCALE);
     ctx.translate(-cameraX, -cameraY);
 
+    const curDrawW = player.inStomach ? STOMACH_WIDTH : MAP_WIDTH;
+    const curDrawH = player.inStomach ? STOMACH_HEIGHT : MAP_HEIGHT;
+
+    if (player.inStomach) {
+        ctx.fillStyle = '#310A12';
+        ctx.fillRect(0, 0, curDrawW * TILE_SIZE, curDrawH * TILE_SIZE);
+    }
+
     const startX = Math.max(0, Math.floor(cameraX / TILE_SIZE));
-    const endX = Math.min(MAP_WIDTH, Math.ceil((cameraX + canvas.width / SCALE) / TILE_SIZE));
+    const endX = Math.min(curDrawW, Math.ceil((cameraX + canvas.width / SCALE) / TILE_SIZE));
     const startY = Math.max(0, Math.floor(cameraY / TILE_SIZE));
-    const endY = Math.min(MAP_HEIGHT, Math.ceil((cameraY + canvas.height / SCALE) / TILE_SIZE));
+    const endY = Math.min(curDrawH, Math.ceil((cameraY + canvas.height / SCALE) / TILE_SIZE));
 
     for (let x = startX; x < endX; x++) {
         for (let y = startY; y < endY; y++) {
-            const block = map[x][y];
+            const block = getTile(x, y);
             if (block !== BLOCKS.AIR) {
-                if (block === BLOCKS.KELP && isSubmergedTile(x, y)) {
+                if (block === BLOCKS.KELP && !player.inStomach && isSubmergedTile(x, y)) {
                     ctx.drawImage(TEXTURES[BLOCKS.WATER], x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
 
@@ -796,19 +1299,34 @@ function draw() {
                     ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
                 
-                if (block === BLOCKS.WATER && y > 0 && map[x][y - 1] === BLOCKS.AIR) {
+                if (block === BLOCKS.WATER && y > 0 && getTile(x, y - 1) === BLOCKS.AIR) {
                     let waveOffset = Math.sin(globalTick * 0.06 + x * 0.7) * 1.2;
                     ctx.fillStyle = 'rgba(200, 240, 255, 0.65)';
                     ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE + 1 + waveOffset, TILE_SIZE, 2);
+                } else if (block === BLOCKS.ACID && y > 0 && getTile(x, y - 1) === BLOCKS.AIR) {
+                    let waveOffset = Math.sin(globalTick * 0.09 + x * 0.9) * 1.4;
+                    ctx.fillStyle = 'rgba(217, 249, 157, 0.85)';
+                    ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE + 1 + waveOffset, TILE_SIZE, 2.5);
                 }
 
-                if (block !== BLOCKS.WATER && block !== BLOCKS.KELP) {
-                    ctx.strokeStyle = 'rgba(0,0,0,0.1)'; 
+                if (block !== BLOCKS.WATER && block !== BLOCKS.KELP && block !== BLOCKS.ACID) {
+                    ctx.strokeStyle = 'rgba(0,0,0,0.12)'; 
                     ctx.lineWidth = 0.5; 
                     ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
             }
         }
+    }
+
+    if (player.inStomach) {
+        ctx.save();
+        ctx.fillStyle = '#fde047';
+        ctx.font = 'bold 7px Arial';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = 'black';
+        ctx.shadowBlur = 3;
+        ctx.fillText("⬆️ PRZEŁYK (PRZEKOP TKANKĘ, ABY WYJŚĆ)", 19 * TILE_SIZE, 1.5 * TILE_SIZE);
+        ctx.restore();
     }
 
     ctx.fillStyle = 'rgba(220, 248, 255, 0.8)';
@@ -838,20 +1356,34 @@ function draw() {
         }
     }
 
-    if (sandworm.active && Array.isArray(sandworm.segments)) {
-        drawSandwormEntity(ctx, sandworm.x, sandworm.y, sandworm.segments, sandworm.radius, sandworm.numSegments);
+    if (!player.inStomach) {
+        // Jeśli gracz właśnie wydostał się z czerwia, narysuj w miejscu wyjścia wynurzającą się paszczę Czerwia!
+        if (typeof wormTransition !== 'undefined' && wormTransition.active && wormTransition.type === 'spit_out') {
+            let exitP = wormTransition.timer / wormTransition.maxTimer;
+            let sinkOffset = exitP * 38;
+            let exitSegs = [
+                { x: wormTransition.worldX, y: wormTransition.worldY + 10 + sinkOffset },
+                { x: wormTransition.worldX, y: wormTransition.worldY + 22 + sinkOffset },
+                { x: wormTransition.worldX, y: wormTransition.worldY + 34 + sinkOffset }
+            ];
+            drawSandwormEntity(ctx, wormTransition.worldX, wormTransition.worldY + sinkOffset, exitSegs, 15, 5);
+        }
+
+        if (sandworm.active && Array.isArray(sandworm.segments)) {
+            drawSandwormEntity(ctx, sandworm.x, sandworm.y, sandworm.segments, sandworm.radius, sandworm.numSegments);
+        }
+
+        bombs.forEach(bomb => {
+            ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(bomb.x, bomb.y, bomb.radius, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(bomb.x, bomb.y - bomb.radius); ctx.lineTo(bomb.x + 3, bomb.y - bomb.radius - 5); ctx.stroke();
+            ctx.fillStyle = 'orange'; ctx.fillRect(bomb.x + 1, bomb.y - bomb.radius - 7, 4, 4);
+            ctx.fillStyle = 'yellow'; ctx.fillRect(bomb.x + 2, bomb.y - bomb.radius - 6, 2, 2);
+        });
+
+        pigs.forEach(pig => {
+            drawPigEntity(ctx, pig.x, pig.y, pig.width, pig.height, pig.direction || 1, pig.wingFlap, player.ridingPig === pig);
+        });
     }
-
-    bombs.forEach(bomb => {
-        ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(bomb.x, bomb.y, bomb.radius, 0, Math.PI*2); ctx.fill();
-        ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(bomb.x, bomb.y - bomb.radius); ctx.lineTo(bomb.x + 3, bomb.y - bomb.radius - 5); ctx.stroke();
-        ctx.fillStyle = 'orange'; ctx.fillRect(bomb.x + 1, bomb.y - bomb.radius - 7, 4, 4);
-        ctx.fillStyle = 'yellow'; ctx.fillRect(bomb.x + 2, bomb.y - bomb.radius - 6, 2, 2);
-    });
-
-    pigs.forEach(pig => {
-        drawPigEntity(ctx, pig.x, pig.y, pig.width, pig.height, pig.direction || 1, pig.wingFlap, player.ridingPig === pig);
-    });
 
     if (!player.dead && !player.isSandworm && !showInventory && !isCommandOpen) {
         const worldMouseX = (mouseX / SCALE) + cameraX;
@@ -869,11 +1401,11 @@ function draw() {
 
         if (distToPlayer < maxDist) {
             let targetTile = getTile(tileX, tileY);
-            let isTargetMinable = (targetTile !== BLOCKS.AIR && targetTile !== BLOCKS.WATER);
+            let isTargetMinable = (targetTile !== BLOCKS.AIR && targetTile !== BLOCKS.WATER && targetTile !== BLOCKS.ACID && (targetTile !== BLOCKS.STOMACH_WALL || (!player.inStomach && player.gameMode === 1)));
             let canSeeTarget = isBlockVisibleToPlayer(tileX, tileY);
             
             let currentItem = hotbar[selectedSlotIndex];
-            let hasItemToPlace = currentItem && currentItem.type !== BLOCKS.AIR && currentItem.count > 0;
+            let hasItemToPlace = currentItem && currentItem.type !== BLOCKS.AIR && currentItem.count > 0 && hasNeighborBlock(tileX, tileY);
             
             if (canSeeTarget) {
                 if (isTargetMinable || hasItemToPlace) {
@@ -895,23 +1427,16 @@ function draw() {
         }
     }
 
-    // RYSOWANIE INNYCH GRACZY W TRYBIE MULTIPLAYER (w tym graczy przemienionych w Czerwia /czerw!)
+    // RYSOWANIE INNYCH GRACZY W TRYBIE MULTIPLAYER (gracze w żołądku czerwia znikają dla graczy na zewnątrz!)
     for (let id in remotePlayers) {
         let rp = remotePlayers[id];
-        if (!rp || rp.inGame === false) continue;
+        if (!rp || rp.inGame === false || Boolean(rp.inStomach) !== Boolean(player.inStomach)) continue;
 
         if (rp.isSandworm && !rp.dead) {
             drawSandwormEntity(ctx, rp.x + 8, rp.y + 12, rp.wormSegments, sandworm.radius, sandworm.numSegments);
         }
 
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 8px Arial';
-        ctx.textAlign = 'center';
-        ctx.shadowColor = 'black';
-        ctx.shadowBlur = 2;
-        ctx.fillText(rp.nick || "Gracz", rp.x + 8, rp.isSandworm ? rp.y - 11 : rp.y - 9);
-        ctx.shadowBlur = 0;
-        ctx.textAlign = 'left';
+        drawOverheadPlayerName(ctx, rp.x + 8, rp.isSandworm ? rp.y - 11 : rp.y - 9, rp.nick || "Gracz", Boolean(rp.isAdmin), false);
 
         if (typeof rp.hp === 'number' && !rp.dead && rp.gameMode !== 1) {
             let hpRatio = Math.max(0, Math.min(1, rp.hp / (rp.maxHp || 5)));
@@ -957,14 +1482,7 @@ function draw() {
         drawSandwormEntity(ctx, player.x + player.width / 2, player.y + player.height / 2, player.wormSegments, sandworm.radius, sandworm.numSegments);
     }
 
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 8px Arial';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'black';
-    ctx.shadowBlur = 2; 
-    ctx.fillText(playerNick || "Gracz", player.x + player.width / 2, player.isSandworm ? player.y - 8 : player.y - 6);
-    ctx.shadowBlur = 0; 
-    ctx.textAlign = 'left';
+    drawOverheadPlayerName(ctx, player.x + player.width / 2, player.isSandworm ? player.y - 8 : player.y - 6, playerNick || "Gracz", Boolean(player.isAdmin), true);
 
     if (!player.isSandworm) {
         let isAirborne = !player.grounded && !player.dead && !player.ridingPig && !player.inWater;
@@ -985,15 +1503,28 @@ function draw() {
         );
     }
 
-    if (player.damageEffect > 0) { 
+    if (player.poisonDamageEffect > 0 || player.inAcid || player.acidPoisonTimer > 0) {
+        let pulseAlpha = player.poisonDamageEffect > 0 ? 0.55 : (0.22 + Math.sin(globalTick * 0.2) * 0.10);
+        ctx.fillStyle = `rgba(132, 204, 22, ${pulseAlpha.toFixed(2)})`;
+        ctx.fillRect(player.x - 4, player.y - 2, 24, 26);
+    } else if (player.damageEffect > 0) { 
         ctx.fillStyle = 'rgba(255, 0, 0, 0.5)'; 
         ctx.fillRect(player.x - 4, player.y, 24, 24); 
     } 
 
     ctx.restore(); 
 
-    // Lekki błękitny filtr ekranu pod wodą
-    if (player.headSubmerged && !showInventory) {
+    // Filtr ekranu pod wodą, w żrącym kwasie lub wewnątrz żołądka czerwia
+    if (player.inStomach && !showInventory) {
+        if (player.inAcid || player.acidPoisonTimer > 0) {
+            let acidPulse = 0.24 + Math.sin(globalTick * 0.16) * 0.08;
+            ctx.fillStyle = `rgba(101, 163, 13, ${acidPulse.toFixed(2)})`;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else {
+            ctx.fillStyle = 'rgba(90, 10, 25, 0.18)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+    } else if (player.headSubmerged && !showInventory) {
         ctx.fillStyle = 'rgba(10, 75, 155, 0.22)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
@@ -1003,17 +1534,23 @@ function draw() {
     } else {
         // --- HUD BEZPOŚREDNIO NA EKRANIE ---
         let pTx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
-        let biomeName = isOceanAt(pTx) ? "Ocean / Morze" : (isDesertAt(pTx) ? "Pustynia" : (biomeMap[pTx] === 'hills' ? "Wzgórza" : (biomeMap[pTx] === 'forest' ? "Las" : "Równiny")));
+        let pTy = Math.floor((player.y + player.height / 2) / TILE_SIZE);
+        let biomeName = player.inStomach ? "Żołądek Czerwia 🪱" : (isOceanAt(pTx) ? "Ocean / Morze" : (isDesertAt(pTx) ? "Pustynia" : (biomeMap[pTx] === 'hills' ? "Wzgórza" : (biomeMap[pTx] === 'forest' ? "Las" : "Równiny"))));
+
+        // Rysuj mini znaczniki graczy znajdujących się poza ekranem
+        drawOffscreenPlayerMarkers(ctx);
 
         ctx.fillStyle = 'white';
         ctx.font = 'bold 22px Arial';
         ctx.textAlign = 'right';
         ctx.shadowColor = 'black';
         ctx.shadowBlur = 4;
-        ctx.fillText(`Gracz: ${playerNick || "Gracz"} | v${VERSION}`, canvas.width - 30, 40);
+        ctx.fillStyle = player.isAdmin ? '#ff7675' : 'white';
+        ctx.fillText(`${player.isAdmin ? "ADMIN" : "Gracz"}: ${playerNick || "Gracz"} | v${VERSION}`, canvas.width - 30, 40);
+        ctx.fillStyle = 'white';
         ctx.font = '14px Arial';
         let swimStatus = player.inWater ? (player.isSwimming ? " | Pływanie: WŁ [L-Ctrl]" : " | Pływanie: WYŁ [L-Ctrl]") : "";
-        ctx.fillText(`Biom: ${biomeName} | [E] Ekwipunek | [T] Czat${swimStatus}`, canvas.width - 30, 65);
+        ctx.fillText(`Biom: ${biomeName} | [E] Ekwipunek | [T] Czat | [TAB] Gracze${swimStatus}`, canvas.width - 30, 65);
 
         if (roomCode) {
             let onlineCount = 1 + Object.keys(remotePlayers).length;
@@ -1037,14 +1574,30 @@ function draw() {
             ctx.fillText("✨ TRYB KREATYWNY — Nieśmiertelność [E]", 38, 47);
             ctx.restore();
         } else {
-            // Tryb Przetrwania (/gm 0) - Serca HP oraz Pasek Powietrza
+            // Tryb Przetrwania (/gm 0) - Serca HP (zielona animacja zatrucia gdy działają toksyny kwasu!)
+            const isPoisonedByAcid = Boolean(player.inAcid || player.acidPoisonTimer > 0);
             for (let i = 0; i < player.maxHp; i++) {
                 let hx = 30 + i * 32; 
                 let hy = 30;
-                drawPixelHeart(ctx, hx, hy, 28, i < player.hp);
+                drawPixelHeart(ctx, hx, hy, 28, i < player.hp, isPoisonedByAcid, i);
             }
 
-            if (player.headSubmerged || player.air < player.maxAir) {
+            if (isPoisonedByAcid) {
+                // Wskaźnik żrących toksyn kwasu (zamiast paska bąbelków wody!)
+                ctx.save();
+                ctx.fillStyle = 'rgba(20, 45, 10, 0.85)';
+                ctx.fillRect(28, 64, 235, 26);
+                ctx.strokeStyle = '#84cc16';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(28, 64, 235, 26);
+                ctx.fillStyle = '#a3e635';
+                ctx.font = 'bold 13px Arial';
+                let toxRatio = Math.max(0.1, Math.min(1, (player.acidPoisonTimer || 180) / 180));
+                ctx.fillRect(32, 83, Math.round(227 * toxRatio), 4);
+                ctx.fillText("☣️ ŻRĄCE TOKSYNY KWASU!", 36, 80);
+                ctx.restore();
+            } else if (!player.inStomach && !player.inAcid && (player.headSubmerged || player.air < player.maxAir)) {
+                // Pasek bąbelków tlenu wyświetla się WYŁĄCZNIE w zwykłej wodzie (nigdy w kwasie!)
                 const totalBubbles = 10;
                 const fullBubbles = Math.ceil((player.air / player.maxAir) * totalBubbles);
                 for (let i = 0; i < totalBubbles; i++) {
@@ -1054,6 +1607,26 @@ function draw() {
                 }
             }
         }
+
+        // Wyświetlanie koordynatów gracza w lewym górnym rogu (pod serduszkami / paskami statusu)
+        let coordBoxY = 68;
+        if (player.gameMode !== 1 && ((player.inAcid || player.acidPoisonTimer > 0) || (!player.inStomach && (player.headSubmerged || player.air < player.maxAir)))) {
+            coordBoxY = 98;
+        }
+        ctx.save();
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+        ctx.fillRect(28, coordBoxY, 172, 28);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(28, coordBoxY, 172, 28);
+        ctx.fillStyle = '#e0f2fe';
+        ctx.font = 'bold 13px Consolas, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`📍 X: ${pTx} | Y: ${pTy}`, 38, coordBoxY + 18);
+        ctx.restore();
+
+        // Półprzezroczysta lista graczy online pod klawiszem [TAB]
+        drawTabPlayerList(ctx);
 
         let HUD_SLOT_SIZE = 60;
         let barWidth = HOTBAR_SLOTS * HUD_SLOT_SIZE; 
@@ -1118,6 +1691,9 @@ function draw() {
             ctx.shadowBlur = 0;
         }
     }
+
+    // Rysuj pełnoekranową animację pożarcia lub wyplucia przez Czerwia (jeśli aktywna)
+    drawWormTransitionOverlay(ctx);
 }
 
 draw();

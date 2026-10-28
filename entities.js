@@ -14,8 +14,29 @@ const player = {
     isSwimming: false, swimToggle: false,
     air: 600, maxAir: 600, drownTimer: 0,
     gameMode: 0,
+    isAdmin: false,
     isSandworm: false,
-    wormSegments: []
+    wormSegments: [],
+    inStomach: false,
+    inAcid: false,
+    acidTimer: 0,
+    acidPoisonTimer: 0,
+    poisonDamageEffect: 0,
+    savedWorldX: spawnX,
+    savedWorldY: spawnY,
+    swallowedByNick: null,
+    swallowedById: null,
+    stomachExitCooldown: 0
+};
+
+let wormTransition = {
+    active: false,
+    type: null, // 'swallow' | 'spit_out'
+    timer: 0,
+    maxTimer: 56,
+    worldX: 0,
+    worldY: 0,
+    eaterNick: ""
 };
 
 let wormPvpCooldowns = {};
@@ -135,17 +156,9 @@ function setPlayerGameMode(mode) {
             player.dead = false;
             document.getElementById('gameOver').style.display = 'none';
         }
-        // Jeśli pasek szybkiego wyboru jest całkowicie pusty, dodaj zestaw startowych bloków kreatywnych
-        let allEmpty = hotbar.every(s => s === null);
-        if (allEmpty) {
-            const starterBlocks = [BLOCKS.GRASS, BLOCKS.STONE, BLOCKS.WOOD, BLOCKS.DIAMOND, BLOCKS.CORAL_PINK];
-            for (let i = 0; i < HOTBAR_SLOTS; i++) {
-                hotbar[i] = { type: starterBlocks[i], count: 99 };
-            }
-        } else {
-            for (let i = 0; i < HOTBAR_SLOTS; i++) {
-                if (hotbar[i]) hotbar[i].count = 99;
-            }
+        // Pasek szybkiego wyboru NIE wypełnia się domyślnymi blokami (gracz sam wybiera bloki z katalogu [E])
+        for (let i = 0; i < HOTBAR_SLOTS; i++) {
+            if (hotbar[i]) hotbar[i].count = 99;
         }
         showSystemNotification("✨ Włączono Tryb Kreatywny (/gm 1) — Nieśmiertelność i pełny katalog bloków pod [E]!", "#4caf50", 240, true);
     } else {
@@ -160,9 +173,141 @@ function setPlayerGameMode(mode) {
     if (typeof sendPlayerState === 'function') sendPlayerState();
 }
 
+// Wejście do małego świata (Żołądka Czerwia) po pożarciu przez czerwia + animacja pożarcia
+function enterWormStomach(eaterNick = "Czerw Pustynny", eaterId = null) {
+    if (player.dead || player.inStomach || player.isSandworm || player.stomachExitCooldown > 0) return;
+    if (player.ridingPig) {
+        dismountCurrentPig(true, true, false);
+    }
+    player.savedWorldX = player.x;
+    player.savedWorldY = player.y;
+
+    // Jeśli żaden inny gracz nie jest aktualnie w żołądku, wygeneruj świeżą komorę żołądka
+    let anyoneElseInStomach = false;
+    for (let id in remotePlayers) {
+        if (remotePlayers[id] && remotePlayers[id].inStomach) {
+            anyoneElseInStomach = true;
+            break;
+        }
+    }
+    if (!anyoneElseInStomach && typeof generateStomachWorld === 'function') {
+        generateStomachWorld();
+    }
+
+    player.inStomach = true;
+    player.inWater = false;
+    player.headSubmerged = false;
+    player.air = player.maxAir;
+    player.drownTimer = 0;
+    player.swallowedByNick = eaterNick;
+    player.swallowedById = eaterId;
+    player.isSwimming = false;
+    player.swimToggle = false;
+    miningX = -1;
+    miningY = -1;
+    miningProgress = 0;
+
+    // Umieść gracza w górnej części komory żołądka (spada z przełyku na centralną wysepkę nad kwasem)
+    player.x = Math.floor(STOMACH_WIDTH / 2) * TILE_SIZE - 8;
+    player.y = 6 * TILE_SIZE;
+    player.vx = 0;
+    player.vy = 0.4;
+    player.fallStartY = player.y;
+
+    // Uruchom pełnoekranową animację pożarcia przez paszczę Czerwia
+    wormTransition = {
+        active: true,
+        type: 'swallow',
+        timer: 0,
+        maxTimer: 58,
+        worldX: player.x + player.width / 2,
+        worldY: player.y + player.height / 2,
+        eaterNick: eaterNick || "Czerw Pustynny"
+    };
+
+    if (typeof createAcidSplash === 'function') {
+        createAcidSplash(player.x + player.width / 2, player.y + player.height, 18);
+    }
+
+    // Upewnij się, że gracz ma w ekwipunku przynajmniej kilka bloków, by móc podsadzić się do przełyku
+    let hasAnyBlocks = hotbar.some(s => s && s.count > 0) || inv.some(s => s && s.count > 0);
+    if (!hasAnyBlocks && typeof addToInventory === 'function') {
+        addToInventory(BLOCKS.FLESH, 8);
+    }
+
+    cameraX = player.x + player.width / 2 - (canvas.width / SCALE) / 2;
+    cameraY = player.y + player.height / 2 - (canvas.height / SCALE) / 2;
+
+    showSystemNotification(`🪱 Zostałeś pożarty przez: ${eaterNick}! Uważaj na żrący kwas i przekop górny przełyk, aby wyjść!`, "#ff9800", 280, true);
+    if (typeof sendPlayerState === 'function') sendPlayerState();
+}
+
+// Wydostanie się z Żołądka Czerwia z powrotem do głównego świata + animacja wyplucia
+function exitWormStomach(reasonMsg = "🪱 Czerw Cię wypluł! Wróciłeś do głównego świata!") {
+    if (!player.inStomach) return;
+    player.inStomach = false;
+    player.inAcid = false;
+    player.acidTimer = 0;
+    player.acidPoisonTimer = 0;
+    player.poisonDamageEffect = 0;
+    player.air = player.maxAir;
+    player.drownTimer = 0;
+    player.stomachExitCooldown = 180; // 3 sekundy ochrony przed ponownym połknięciem
+    miningX = -1;
+    miningY = -1;
+    miningProgress = 0;
+
+    if (player.swallowedById && remotePlayers[player.swallowedById] && remotePlayers[player.swallowedById].inGame !== false) {
+        player.x = remotePlayers[player.swallowedById].x;
+        player.y = remotePlayers[player.swallowedById].y - 28;
+    } else {
+        player.x = player.savedWorldX || (SPAWN_TILE_X * TILE_SIZE);
+        let safeSurfaceY = getSurfaceY(Math.floor(player.x / TILE_SIZE));
+        player.y = Math.min(player.savedWorldY || safeSurfaceY, safeSurfaceY);
+    }
+
+    let safety = 0;
+    while (checkCollision(player.x, player.y, player.width, player.height) && safety < 80 && player.y > TILE_SIZE * 2) {
+        player.y -= TILE_SIZE;
+        safety++;
+    }
+
+    player.vy = -6.8;
+    player.vx = (player.direction || 1) * 2.6;
+    player.invulTimer = 65;
+    player.fallStartY = player.y;
+    player.swallowedByNick = null;
+    player.swallowedById = null;
+
+    // Uruchom animację wyplucia z paszczy Czerwia na powierzchnię
+    wormTransition = {
+        active: true,
+        type: 'spit_out',
+        timer: 0,
+        maxTimer: 54,
+        worldX: player.x + player.width / 2,
+        worldY: player.y + player.height,
+        eaterNick: ""
+    };
+
+    if (typeof createAcidSplash === 'function') {
+        createAcidSplash(player.x + player.width / 2, player.y + player.height / 2, 28);
+    }
+
+    cameraX = player.x + player.width / 2 - (canvas.width / SCALE) / 2;
+    cameraY = player.y + player.height / 2 - (canvas.height / SCALE) / 2;
+
+    showSystemNotification(reasonMsg, "#4caf50", 240, true);
+    if (typeof sendPlayerState === 'function') sendPlayerState();
+}
+
 // Ukryta komenda /czerw - przemiana gracza w Czerwia Pustynnego (i z powrotem)
 function toggleSandwormMode() {
     if (player.dead) return;
+    if (player.inStomach) {
+        showSystemNotification("Nie możesz przemienić się w czerwia wewnątrz żołądka! Przekop górny przełyk!", "#ff5252");
+        return;
+    }
     player.isSandworm = !player.isSandworm;
     if (player.isSandworm) {
         if (player.ridingPig) {
@@ -199,6 +344,10 @@ function toggleSandwormMode() {
 // Ukryta komenda /pig - natychmiast sadza gracza na latającej świni (jeśli nie ma wierzchowca)
 function spawnAndMountPigCommand() {
     if (player.dead) return;
+    if (player.inStomach) {
+        showSystemNotification("Nie można przyzwać świni wewnątrz żołądka czerwia!", "#ff5252");
+        return;
+    }
     if (player.ridingPig) {
         showSystemNotification("Już siedzisz na latającej świni!", "#ff9800");
         return;
@@ -285,6 +434,24 @@ function createWaterSplash(cx, cy, count = 24) {
     }
 }
 
+// Zielony, żrący plusk kwasu żołądkowego (zamiast niebieskiego plusku wody!)
+function createAcidSplash(cx, cy, count = 22) {
+    const acidCols = ['#84cc16', '#a3e635', '#bef264', '#4d7c0f', '#22c55e'];
+    for (let i = 0; i < count; i++) {
+        let angle = -Math.PI * 0.12 - Math.random() * Math.PI * 0.76;
+        let speed = 1.1 + Math.random() * 2.7;
+        splashParticles.push({
+            x: cx + (Math.random() - 0.5) * 18,
+            y: cy,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 0.85,
+            size: 2.2 + Math.random() * 2.6,
+            color: acidCols[Math.floor(Math.random() * acidCols.length)],
+            life: 26 + Math.floor(Math.random() * 20)
+        });
+    }
+}
+
 function checkEntityWaterState(x, y, w, h) {
     let left = Math.floor(x / TILE_SIZE);
     let right = Math.floor((x + w - 0.1) / TILE_SIZE);
@@ -292,10 +459,12 @@ function checkEntityWaterState(x, y, w, h) {
     let bottom = Math.floor((y + h - 0.1) / TILE_SIZE);
     let inWater = false;
     let inKelp = false;
+    let inAcid = false;
     for (let tx = left; tx <= right; tx++) {
         for (let ty = top; ty <= bottom; ty++) {
             let t = getTile(tx, ty);
             if (t === BLOCKS.WATER) inWater = true;
+            if (t === BLOCKS.ACID) inAcid = true;
             if (t === BLOCKS.KELP) {
                 inKelp = true;
                 if (isSubmergedTile(tx, ty)) inWater = true;
@@ -305,16 +474,22 @@ function checkEntityWaterState(x, y, w, h) {
     let eyeX = Math.floor((x + w / 2) / TILE_SIZE);
     let eyeY = Math.floor((y + 4) / TILE_SIZE);
     let eyeTile = getTile(eyeX, eyeY);
-    let headSubmerged = (eyeTile === BLOCKS.WATER || (eyeTile === BLOCKS.KELP && isSubmergedTile(eyeX, eyeY)));
-    return { inWater, inKelp, headSubmerged };
+    // W kwasie NIE ma topienia się ani paska bąbelków tlenu — w kwasie ginie się od żrących toksyn!
+    let headSubmerged = (!inAcid && (eyeTile === BLOCKS.WATER || (eyeTile === BLOCKS.KELP && isSubmergedTile(eyeX, eyeY))));
+    return { inWater, inKelp, inAcid, headSubmerged };
 }
 
-function damagePlayer(amount) {
+function damagePlayer(amount, isAcidToxin = false) {
     if (player.gameMode === 1) return; // Nieśmiertelność w trybie kreatywnym (/gm 1)
     if (player.invulTimer <= 0 && !player.dead) {
         player.hp -= amount; 
-        player.damageEffect = 15; 
-        player.invulTimer = 30; 
+        if (isAcidToxin) {
+            player.poisonDamageEffect = 18;
+            player.damageEffect = 8;
+        } else {
+            player.damageEffect = 15; 
+        }
+        player.invulTimer = 28; 
         regenTimer = 0; 
         if (player.hp <= 0) {
             player.hp = 0; 
@@ -324,6 +499,8 @@ function damagePlayer(amount) {
             }
             player.isSandworm = false;
             player.wormSegments = [];
+            player.acidPoisonTimer = 0;
+            player.poisonDamageEffect = 0;
             player.isSwimming = false;
             player.swimToggle = false;
             showInventory = false;
@@ -343,7 +520,7 @@ function tryPvpMeleeAttack(worldMouseX, worldMouseY) {
 
     for (let id in remotePlayers) {
         let rp = remotePlayers[id];
-        if (!rp || rp.dead) continue;
+        if (!rp || rp.dead || Boolean(rp.inStomach) !== Boolean(player.inStomach)) continue;
 
         let rpCenterX = rp.x + 8;
         let rpCenterY = rp.y + 12;
@@ -370,15 +547,91 @@ function updateEntities() {
     if (player.bombCooldown > 0) player.bombCooldown--;
     if (pvpHitCooldown > 0) pvpHitCooldown--;
     if (systemMessageTimer > 0) systemMessageTimer--;
+    if (player.stomachExitCooldown > 0) player.stomachExitCooldown--;
+    if (player.poisonDamageEffect > 0) player.poisonDamageEffect--;
+
+    if (wormTransition.active) {
+        wormTransition.timer++;
+        if (wormTransition.timer >= wormTransition.maxTimer) {
+            wormTransition.active = false;
+        }
+    }
 
     let wasInWater = player.inWater;
+    let wasInAcid = player.inAcid;
     const waterState = checkEntityWaterState(player.x, player.y, player.width, player.height);
     player.inWater = waterState.inWater;
     player.inKelp = waterState.inKelp;
+    player.inAcid = Boolean(waterState.inAcid);
     player.headSubmerged = waterState.headSubmerged;
 
-    // Plusk wody gdy gracz wskoczy z powietrza do wody
-    if (!wasInWater && player.inWater && player.vy > 1.8 && !player.ridingPig) {
+    // Zielony plusk kwasu gdy gracz wpadnie do kwasu w żołądku czerwia
+    if (!wasInAcid && player.inAcid && player.vy > 0.8 && !player.ridingPig) {
+        let spX = Math.round(player.x + player.width / 2);
+        let spY = Math.round(player.y + player.height - 3);
+        createAcidSplash(spX, spY, 22);
+    }
+
+    // Żrące toksyny Kwasu Żołądkowego (działają w żołądku oraz gdy kwas zostanie postawiony w świecie)
+    if (!player.dead) {
+        if (player.inAcid) {
+            player.acidPoisonTimer = 180; // 3 sekundy zatrucia żrącymi toksynami (utrzymuje się też chwilę po wyjściu)
+            if (Math.random() < 0.42) {
+                splashParticles.push({
+                    x: player.x + (Math.random() - 0.1) * (player.width + 4),
+                    y: player.y + Math.random() * player.height,
+                    vx: (Math.random() - 0.5) * 1.1,
+                    vy: -0.9 - Math.random() * 1.4,
+                    size: 2.2 + Math.random() * 1.8,
+                    color: Math.random() > 0.4 ? '#a3e635' : '#4ade80',
+                    life: 22 + Math.floor(Math.random() * 12)
+                });
+            }
+            if (player.gameMode !== 1) {
+                player.acidTimer++;
+                if (player.acidTimer >= 36) {
+                    damagePlayer(1, true);
+                    createAcidSplash(player.x + player.width / 2, player.y + player.height / 2, 10);
+                    player.acidTimer = 0;
+                }
+            }
+        } else if (player.acidPoisonTimer > 0) {
+            player.acidPoisonTimer--;
+            if (Math.random() < 0.25) {
+                splashParticles.push({
+                    x: player.x + Math.random() * player.width,
+                    y: player.y + Math.random() * player.height,
+                    vx: (Math.random() - 0.5) * 0.6,
+                    vy: -0.6 - Math.random() * 0.8,
+                    size: 2.0,
+                    color: '#84cc16',
+                    life: 18
+                });
+            }
+            if (player.gameMode !== 1) {
+                player.acidTimer++;
+                if (player.acidTimer >= 72) {
+                    damagePlayer(1, true);
+                    player.acidTimer = 0;
+                }
+            }
+        } else {
+            player.acidTimer = 0;
+        }
+
+        // Sprawdź czy gracz w żołądku dotarł do górnego przełyku (x = 16..21, y <= 3.2) -> zostaje wypluty na powierzchnię!
+        if (player.inStomach) {
+            let pCenterX = (player.x + player.width / 2) / TILE_SIZE;
+            let pTopY = player.y / TILE_SIZE;
+            if (pTopY <= 3.1 && pCenterX >= 15.5 && pCenterX <= 22.5) {
+                exitWormStomach("🪱 Przekopałeś przełyk! Czerw Cię wypluł z powrotem na świat!");
+                return;
+            }
+        }
+    }
+
+    // Plusk wody tylko dla zwykłej wody (nigdy w kwasie!)
+    if (!wasInWater && player.inWater && !player.inAcid && player.vy > 1.8 && !player.ridingPig) {
         let spX = Math.round(player.x + player.width / 2);
         let spY = Math.round(player.y + player.height - 4);
         createWaterSplash(spX, spY, 18);
@@ -388,7 +641,8 @@ function updateEntities() {
     }
 
     if (!player.dead) {
-        if (player.gameMode === 1 || player.isSandworm) {
+        if (player.gameMode === 1 || player.isSandworm || player.inStomach || player.inAcid) {
+            // W żołądku i w kwasie nie ma topienia się ani utraty tlenu
             player.air = player.maxAir;
             player.drownTimer = 0;
         } else if (player.headSubmerged) {
@@ -416,7 +670,8 @@ function updateEntities() {
         }
     }
 
-    if (!player.dead && player.hp < player.maxHp && (!player.headSubmerged || player.air > 0)) {
+    // Brak regeneracji zdrowia podczas działania żrących toksyn kwasu
+    if (!player.dead && player.hp < player.maxHp && (!player.headSubmerged || player.air > 0) && !player.inAcid && player.acidPoisonTimer <= 0) {
         regenTimer++;
         if (regenTimer >= REGEN_TIME) { player.hp += 1; regenTimer = 0; }
     } else { 
@@ -444,7 +699,7 @@ function updateEntities() {
         }
     }
 
-    if (globalTick % 4 === 0) {
+    if (globalTick % 4 === 0 && !player.inStomach) {
         updateWaterPhysics(cameraX, cameraY);
     }
 
@@ -564,26 +819,18 @@ function updateEntities() {
                 }
             }
 
-            // Zadawanie obrażeń innym graczom dokładnie tak jak Czerw (2 serca obrażeń, wyrzut w górę vy = -6 i zrzucenie ze świni!)
+            // Pożeranie innych graczy przez Czerwia (/czerw) -> zamyka zjedzonego gracza w Żołądku!
             for (let id in remotePlayers) {
                 let rp = remotePlayers[id];
-                if (!rp || rp.dead || rp.inGame === false || rp.gameMode === 1) continue;
+                if (!rp || rp.dead || rp.inGame === false || rp.inStomach || rp.isSandworm) continue;
                 let rpCenterX = rp.x + 8;
                 let rpCenterY = rp.y + 12;
                 let hitByWorm = Math.hypot(rpCenterX - headX, rpCenterY - headY) < sandworm.radius * 2 + 4;
-                if (!hitByWorm && Array.isArray(player.wormSegments)) {
-                    for (let sIdx = 1; sIdx < Math.min(5, player.wormSegments.length); sIdx++) {
-                        let seg = player.wormSegments[sIdx];
-                        if (seg && Math.hypot(rpCenterX - seg.x, rpCenterY - seg.y) < sandworm.radius * 2) {
-                            hitByWorm = true;
-                            break;
-                        }
-                    }
-                }
                 if (hitByWorm && (!wormPvpCooldowns[id] || wormPvpCooldowns[id] <= 0)) {
-                    wormPvpCooldowns[id] = 32;
+                    wormPvpCooldowns[id] = 65;
                     let knockDir = (rpCenterX >= headX) ? 1 : -1;
-                    sendPvpHit(id, 2, knockDir * 3.0, -6.0, true);
+                    sendPvpHit(id, 1, knockDir * 2.0, -4.0, true, true);
+                    showSystemNotification(`🪱 Pożarłeś gracza ${rp.nick}! Został zamknięty w Twoim żołądku!`, "#4caf50", 220, true);
                 }
             }
         } else if (player.ridingPig) {
@@ -649,6 +896,55 @@ function updateEntities() {
                     }
                 }
             }
+        } else if (player.inAcid) {
+            // Ruch w Gęstym, Żrącym Kwasie Czerwia (mocne spowolnienie ruchów + zielone rozbryzgi)
+            let acidSpeed = player.speed * 0.36;
+            if (moveL) {
+                player.vx = -acidSpeed;
+                player.direction = -1;
+                player.walkFrame += 0.045;
+            } else if (moveR) {
+                player.vx = acidSpeed;
+                player.direction = 1;
+                player.walkFrame += 0.045;
+            } else {
+                player.vx *= 0.68;
+                if (Math.abs(player.vx) < 0.04) player.vx = 0;
+                player.walkFrame = 0;
+            }
+
+            if (Math.abs(player.vx) > 0.15 && globalTick % 10 === 0) {
+                createAcidSplash(player.x + player.width / 2, player.y + player.height - 2, 4);
+            }
+
+            if (jump || dismount) {
+                player.vy = -1.35;
+                let aboveTile = getTile(Math.floor((player.x + player.width / 2) / TILE_SIZE), Math.floor((player.y - 3) / TILE_SIZE));
+                if (aboveTile === BLOCKS.AIR) {
+                    player.vy = -4.5;
+                    createAcidSplash(player.x + player.width / 2, player.y + player.height - 2, 10);
+                }
+            } else if (moveDown) {
+                player.vy = 0.85;
+            } else {
+                player.vy += GRAVITY * 0.12;
+                if (player.vy > 0.5) player.vy = 0.5;
+            }
+
+            if (!checkCollision(player.x + player.vx, player.y, player.width, player.height)) {
+                player.x += player.vx;
+            } else {
+                player.vx = 0;
+            }
+
+            player.grounded = false;
+            if (!checkCollision(player.x, player.y + player.vy, player.width, player.height)) {
+                player.y += player.vy;
+            } else {
+                if (player.vy > 0) player.grounded = true;
+                player.vy = 0;
+            }
+            player.fallStartY = player.y;
         } else if (player.inWater) {
             let swimSpeed = player.isSwimming ? (player.speed * 0.80) : (player.speed * 0.52);
             if (player.inKelp) {
@@ -703,6 +999,9 @@ function updateEntities() {
             player.fallStartY = player.y;
         } else {
             let landSpeed = player.inKelp ? (player.speed * 0.80) : player.speed;
+            if (player.acidPoisonTimer > 0) {
+                landSpeed *= 0.72; // Osłabienie i spowolnienie od żrących toksyn jeszcze przez chwilę po wyjściu z kwasu
+            }
             if (moveL) { player.vx = -landSpeed; player.direction = -1; player.walkFrame += 0.11; }
             else if (moveR) { player.vx = landSpeed; player.direction = 1; player.walkFrame += 0.11; }
             else { 
@@ -751,10 +1050,12 @@ function updateEntities() {
         if (!checkCollision(player.x, player.y + player.vy, player.width, player.height)) player.y += player.vy;
     }
     
+    const activeMapW = player.inStomach ? STOMACH_WIDTH : MAP_WIDTH;
+    const activeMapH = player.inStomach ? STOMACH_HEIGHT : MAP_HEIGHT;
     if (player.x < 0) player.x = 0;
-    if (player.x + player.width > MAP_WIDTH * TILE_SIZE) player.x = MAP_WIDTH * TILE_SIZE - player.width;
-    if (player.y > MAP_HEIGHT * TILE_SIZE && !player.dead) {
-        if (player.gameMode === 1) { player.y = MAP_HEIGHT * TILE_SIZE - player.height; player.vy = 0; }
+    if (player.x + player.width > activeMapW * TILE_SIZE) player.x = activeMapW * TILE_SIZE - player.width;
+    if (player.y > activeMapH * TILE_SIZE && !player.dead) {
+        if (player.gameMode === 1 || player.inStomach) { player.y = activeMapH * TILE_SIZE - player.height - TILE_SIZE * 2; player.vy = 0; }
         else { damagePlayer(5); }
     }
 
@@ -806,16 +1107,13 @@ function updateEntities() {
                 }
             }
         }
-        // Obrażenia zadawane przez innego gracza-Czerwia dokładnie jak przez Czerwia z Diuny
-        if (!player.dead && player.gameMode !== 1 && !player.isSandworm && player.invulTimer <= 0) {
+        // Pożarcie naszego gracza przez innego gracza będącego Czerwiem (/czerw)
+        if (!player.dead && !player.inStomach && !player.isSandworm && player.stomachExitCooldown <= 0 && player.invulTimer <= 0) {
             let myCenterX = player.x + player.width / 2;
             let myCenterY = player.y + player.height / 2;
             if (Math.hypot(myCenterX - rHeadX, myCenterY - rHeadY) < sandworm.radius * 2) {
-                if (player.ridingPig) {
-                    dismountCurrentPig(true, true, false);
-                }
-                damagePlayer(2);
-                player.vy = -6;
+                if (player.gameMode !== 1) damagePlayer(1);
+                enterWormStomach(rp.nick || "Czerw", id);
             }
         }
     }
@@ -832,13 +1130,10 @@ function updateEntities() {
             sandworm.active = false;
             sandworm.isRemote = false;
             sandworm.state = 'idle';
-        } else if (sandworm.state === 'attacking' && !player.dead) {
+        } else if (sandworm.state === 'attacking' && !player.dead && !player.inStomach && !player.isSandworm && player.stomachExitCooldown <= 0) {
             if (Math.hypot(player.x - sandworm.x, player.y - sandworm.y) < sandworm.radius * 2) {
-                if (player.ridingPig) {
-                    dismountCurrentPig(true, true, false);
-                }
-                damagePlayer(2);
-                player.vy = -6;
+                if (player.gameMode !== 1) damagePlayer(1);
+                enterWormStomach("Dziki Czerw", null);
             }
         }
     } else {
@@ -898,12 +1193,9 @@ function updateEntities() {
                 } else {
                     sandworm.state = 'retreating'; 
                 }
-                if (!player.dead && Math.hypot(player.x - sandworm.x, player.y - sandworm.y) < sandworm.radius * 2) {
-                    if (player.ridingPig) {
-                        dismountCurrentPig(true, true, false);
-                    }
-                    damagePlayer(2);
-                    player.vy = -6;
+                if (!player.dead && !player.inStomach && !player.isSandworm && player.stomachExitCooldown <= 0 && Math.hypot(player.x - sandworm.x, player.y - sandworm.y) < sandworm.radius * 2) {
+                    if (player.gameMode !== 1) damagePlayer(1);
+                    enterWormStomach("Dziki Czerw", null);
                 }
             } else if (sandworm.state === 'retreating') {
                 sandworm.y += sandworm.speed; 
@@ -1131,14 +1423,28 @@ function updateEntities() {
         }
     }
 
-    // KAMERA Z LERP
+    // KAMERA Z LERP (obsługuje zarówno główny świat, jak i mały świat Żołądka Czerwia)
     let targetCameraX = player.x + player.width / 2 - (canvas.width / SCALE) / 2; 
     let targetCameraY = player.y + player.height / 2 - (canvas.height / SCALE) / 2;
     
-    if (targetCameraX < 0) targetCameraX = 0; 
-    if (targetCameraX > MAP_WIDTH * TILE_SIZE - canvas.width / SCALE) targetCameraX = MAP_WIDTH * TILE_SIZE - canvas.width / SCALE;
-    if (targetCameraY < 0) targetCameraY = 0; 
-    if (targetCameraY > MAP_HEIGHT * TILE_SIZE - canvas.height / SCALE) targetCameraY = MAP_HEIGHT * TILE_SIZE - canvas.height / SCALE;
+    let camWorldW = (player.inStomach ? STOMACH_WIDTH : MAP_WIDTH) * TILE_SIZE;
+    let camWorldH = (player.inStomach ? STOMACH_HEIGHT : MAP_HEIGHT) * TILE_SIZE;
+    let viewW = canvas.width / SCALE;
+    let viewH = canvas.height / SCALE;
+
+    if (camWorldW <= viewW) {
+        targetCameraX = (camWorldW - viewW) / 2;
+    } else {
+        if (targetCameraX < 0) targetCameraX = 0; 
+        if (targetCameraX > camWorldW - viewW) targetCameraX = camWorldW - viewW;
+    }
+
+    if (camWorldH <= viewH) {
+        targetCameraY = (camWorldH - viewH) / 2;
+    } else {
+        if (targetCameraY < 0) targetCameraY = 0; 
+        if (targetCameraY > camWorldH - viewH) targetCameraY = camWorldH - viewH;
+    }
 
     cameraX += (targetCameraX - cameraX) * CAMERA_SPEED;
     cameraY += (targetCameraY - cameraY) * CAMERA_SPEED;
@@ -1172,14 +1478,14 @@ function updateEntities() {
         if (!hitOtherPlayer && distToPlayer < maxDist) {
             let targetBlock = getTile(tileX, tileY);
             let currentItem = hotbar[selectedSlotIndex];
-            let isTargetMinable = (targetBlock !== BLOCKS.AIR && targetBlock !== BLOCKS.WATER);
-            let isTargetReplaceable = (targetBlock === BLOCKS.AIR || (targetBlock === BLOCKS.WATER && (!currentItem || currentItem.type !== BLOCKS.WATER)));
+            let isTargetMinable = (targetBlock !== BLOCKS.AIR && targetBlock !== BLOCKS.WATER && targetBlock !== BLOCKS.ACID && (targetBlock !== BLOCKS.STOMACH_WALL || (!player.inStomach && player.gameMode === 1)));
+            let isTargetReplaceable = (targetBlock === BLOCKS.AIR || (targetBlock === BLOCKS.ACID && (!currentItem || currentItem.type !== BLOCKS.ACID)) || (targetBlock === BLOCKS.WATER && (!currentItem || currentItem.type !== BLOCKS.WATER)));
             let canSeeTarget = isBlockVisibleToPlayer(tileX, tileY);
             
             if (clickMining && canSeeTarget) {
                 if (isTargetMinable) {
                     if (miningX === tileX && miningY === tileY) {
-                        miningProgress += (player.gameMode === 1 ? 35 : 1);
+                        miningProgress += (player.gameMode === 1 ? Math.max(35, Math.ceil((BLOCK_HARDNESS[targetBlock] || 35) / 2)) : 1);
                         pickaxeSwing += 0.18; 
                         
                         if (miningProgress >= BLOCK_HARDNESS[targetBlock]) {
@@ -1210,7 +1516,7 @@ function updateEntities() {
                 miningY = -1;
             }
             
-            if (clickPlacing && buildTimer === 0 && currentItem && canSeeTarget && isTargetReplaceable) {
+            if (clickPlacing && buildTimer === 0 && currentItem && canSeeTarget && isTargetReplaceable && hasNeighborBlock(tileX, tileY)) {
                 let prevBlock = targetBlock;
                 if (!checkCollision(player.x, player.y, player.width, player.height)) {
                      setTile(tileX, tileY, currentItem.type);

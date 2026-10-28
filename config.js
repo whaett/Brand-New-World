@@ -20,6 +20,10 @@ const MAP_WIDTH = 1200;
 const MAP_HEIGHT = 220;
 const SEA_LEVEL = 64;
 
+// Wymiary małego świata (Żołądka Czerwia)
+const STOMACH_WIDTH = 38;
+const STOMACH_HEIGHT = 24;
+
 // Zbalansowana, dynamiczniejsza fizyka (v1.5)
 const GRAVITY = 0.22; 
 const MAX_FALL_SPEED = 14; 
@@ -32,7 +36,8 @@ const INV_SLOTS = 20;
 
 const BLOCKS = { 
     AIR: 0, DIRT: 1, GRASS: 2, STONE: 3, WOOD: 4, LEAVES: 5, DIAMOND: 6, 
-    SAND: 7, CACTUS: 8, WATER: 9, KELP: 10, CORAL_PINK: 11, CORAL_CYAN: 12, CORAL_GOLD: 13
+    SAND: 7, CACTUS: 8, WATER: 9, KELP: 10, CORAL_PINK: 11, CORAL_CYAN: 12, CORAL_GOLD: 13,
+    FLESH: 14, BONE: 15, ACID: 16, STOMACH_WALL: 17
 };
 
 const BLOCK_NAMES = {
@@ -48,7 +53,11 @@ const BLOCK_NAMES = {
     [BLOCKS.KELP]: "Wodorosty",
     [BLOCKS.CORAL_PINK]: "Różowy Koral",
     [BLOCKS.CORAL_CYAN]: "Błękitny Koral",
-    [BLOCKS.CORAL_GOLD]: "Złoty Koral"
+    [BLOCKS.CORAL_GOLD]: "Złoty Koral",
+    [BLOCKS.FLESH]: "Tkanka Żołądka",
+    [BLOCKS.BONE]: "Kość",
+    [BLOCKS.ACID]: "Kwas Żołądkowy",
+    [BLOCKS.STOMACH_WALL]: "Ściana Żołądka"
 };
 
 const COLORS = {
@@ -65,25 +74,33 @@ const COLORS = {
     [BLOCKS.KELP]: '#1E7A3A',
     [BLOCKS.CORAL_PINK]: '#FF5C8A',
     [BLOCKS.CORAL_CYAN]: '#00D2FF',
-    [BLOCKS.CORAL_GOLD]: '#FFB703'
+    [BLOCKS.CORAL_GOLD]: '#FFB703',
+    [BLOCKS.FLESH]: '#9B2226',
+    [BLOCKS.BONE]: '#E9D8A6',
+    [BLOCKS.ACID]: 'rgba(132, 204, 22, 0.78)',
+    [BLOCKS.STOMACH_WALL]: '#3B0910'
 };
 
 // Przyspieszone, dobrze wyważone czasy kopania bloków (v1.5)
 const BLOCK_HARDNESS = {
     [BLOCKS.AIR]: 0, 
     [BLOCKS.WATER]: 0,
+    [BLOCKS.ACID]: 0,
     [BLOCKS.KELP]: 6,
     [BLOCKS.LEAVES]: 8, 
     [BLOCKS.DIRT]: 15, 
     [BLOCKS.GRASS]: 15,
     [BLOCKS.SAND]: 15, 
+    [BLOCKS.FLESH]: 16,
     [BLOCKS.CACTUS]: 18, 
     [BLOCKS.CORAL_PINK]: 22,
     [BLOCKS.CORAL_CYAN]: 22,
     [BLOCKS.CORAL_GOLD]: 22,
     [BLOCKS.WOOD]: 32, 
+    [BLOCKS.BONE]: 36,
     [BLOCKS.STONE]: 65, 
-    [BLOCKS.DIAMOND]: 110  
+    [BLOCKS.DIAMOND]: 110,
+    [BLOCKS.STOMACH_WALL]: 999999
 };
 
 // Stan globalny wejścia, czatu, komend i gry

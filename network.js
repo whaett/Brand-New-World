@@ -253,7 +253,9 @@ function getActivePlayersSnapshot(excludeId = null) {
             pickaxeAnim: null,
             grounded: player.grounded,
             gameMode: player.gameMode || 0,
+            isAdmin: Boolean(player.isAdmin),
             isSandworm: Boolean(player.isSandworm),
+            inStomach: Boolean(player.inStomach),
             wormSegments: (player.isSandworm && Array.isArray(player.wormSegments)) ? player.wormSegments.map(s => ({ x: Math.round(s.x), y: Math.round(s.y) })) : null,
             isHost: isRoomHost,
             inGame: true
@@ -279,7 +281,9 @@ function getActivePlayersSnapshot(excludeId = null) {
                 pickaxeAnim: rp.pickaxeAnim,
                 grounded: rp.grounded,
                 gameMode: rp.gameMode || 0,
+                isAdmin: Boolean(rp.isAdmin),
                 isSandworm: Boolean(rp.isSandworm),
+                inStomach: Boolean(rp.inStomach),
                 wormSegments: rp.wormSegments || null,
                 isHost: Boolean(rp.isHost),
                 inGame: rp.inGame !== false
@@ -506,7 +510,7 @@ function handleNetworkPacket(data, sourceConn) {
         relayFromHost(data, sourceConn);
     }
     else if (data.type === 'block_change') {
-        setTile(data.x, data.y, data.block, false);
+        setTile(data.x, data.y, data.block, false, Boolean(data.inStomach));
         relayFromHost(data, sourceConn);
     } 
     else if (data.type === 'bomb_spawn') {
@@ -521,13 +525,18 @@ function handleNetworkPacket(data, sourceConn) {
         relayFromHost(data, sourceConn);
     }
     else if (data.type === 'pvp_hit') {
-        if (data.targetId === myPlayerId && !player.dead && player.gameMode !== 1) {
+        if (data.targetId === myPlayerId && !player.dead) {
             if (data.dismountPig && player.ridingPig) {
                 dismountCurrentPig(true, true, false);
             }
-            damagePlayer(data.damage || 1);
-            player.vx = data.knockVx || 0;
-            player.vy = data.knockVy || -3.2;
+            if (data.swallow && !player.inStomach && !player.isSandworm && typeof enterWormStomach === 'function') {
+                if (player.gameMode !== 1) damagePlayer(data.damage || 1);
+                enterWormStomach(data.senderNick || "Czerw", data.senderId);
+            } else if (player.gameMode !== 1) {
+                damagePlayer(data.damage || 1);
+                player.vx = data.knockVx || 0;
+                player.vy = data.knockVy || -3.2;
+            }
         }
         relayFromHost(data, sourceConn);
     }
@@ -655,10 +664,10 @@ function handleNetworkPacket(data, sourceConn) {
         }
         relayFromHost(data, sourceConn);
     }
-    // Obsługa wiadomości czatu pod klawiszem [T]
+    // Obsługa wiadomości czatu pod klawiszem [T] (z uwzględnieniem rangi ADMIN / Gracz)
     else if (data.type === 'chat_message') {
         if (typeof addChatMessage === 'function') {
-            addChatMessage(data.nick || "Gracz", data.text || "", data.msgType || 'chat');
+            addChatMessage(data.nick || "Gracz", data.text || "", data.msgType || 'chat', Boolean(data.isAdmin));
         }
         relayFromHost(data, sourceConn);
     }
@@ -685,7 +694,9 @@ function handleNetworkPacket(data, sourceConn) {
             pickaxeAnim: data.pickaxeAnim,
             grounded: data.grounded,
             gameMode: data.gameMode || 0,
+            isAdmin: Boolean(data.isAdmin),
             isSandworm: Boolean(data.isSandworm),
+            inStomach: Boolean(data.inStomach),
             wormSegments: Array.isArray(data.wormSegments) ? data.wormSegments : (prev && prev.wormSegments ? prev.wormSegments : null),
             isHost: Boolean(data.isHost),
             inGame: true,
@@ -700,14 +711,15 @@ function handleNetworkPacket(data, sourceConn) {
     }
 }
 
-function sendBlockChange(x, y, block) {
+function sendBlockChange(x, y, block, inStomach = false) {
     if (!roomCode) return;
     broadcastPacket({
         type: 'block_change',
         senderId: myPlayerId,
         x: x,
         y: y,
-        block: block
+        block: block,
+        inStomach: Boolean(inStomach)
     });
 }
 
@@ -797,11 +809,12 @@ function sendChatMessagePacket(text, msgType = 'chat') {
         senderId: myPlayerId,
         nick: playerNick || "Gracz",
         text: text,
-        msgType: msgType
+        msgType: msgType,
+        isAdmin: Boolean(player.isAdmin)
     });
 }
 
-function sendPvpHit(targetId, damage, knockVx, knockVy, dismountPig = false) {
+function sendPvpHit(targetId, damage, knockVx, knockVy, dismountPig = false, swallow = false) {
     if (!roomCode) return;
     if (remotePlayers[targetId] && remotePlayers[targetId].gameMode !== 1) {
         remotePlayers[targetId].damageEffect = 15;
@@ -809,11 +822,13 @@ function sendPvpHit(targetId, damage, knockVx, knockVy, dismountPig = false) {
     broadcastPacket({
         type: 'pvp_hit',
         senderId: myPlayerId,
+        senderNick: playerNick || "Czerw",
         targetId: targetId,
         damage: damage,
         knockVx: knockVx,
         knockVy: knockVy,
-        dismountPig: Boolean(dismountPig)
+        dismountPig: Boolean(dismountPig),
+        swallow: Boolean(swallow)
     });
 }
 
@@ -839,7 +854,9 @@ function sendPlayerState() {
         pickaxeAnim: pickaxeAnim,
         grounded: player.grounded,
         gameMode: player.gameMode || 0,
+        isAdmin: Boolean(player.isAdmin),
         isSandworm: Boolean(player.isSandworm),
+        inStomach: Boolean(player.inStomach),
         wormSegments: (player.isSandworm && Array.isArray(player.wormSegments)) ? player.wormSegments.map(s => ({ x: Math.round(s.x), y: Math.round(s.y) })) : null,
         isHost: isRoomHost
     });

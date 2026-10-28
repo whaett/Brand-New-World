@@ -6,11 +6,17 @@ let inv = Array(INV_SLOTS).fill(null);
 let cursorItem = null;
 let showInventory = false;
 let selectedSlotIndex = 0; 
+let creativeCatalogPage = 0;
 
 const UI_W = 620;
 const UI_H = 430;
+const CREATIVE_UI_W = 690;
+const CREATIVE_UI_H = 460;
 const SLOT_SIZE = 42;
 const SLOT_STEP = 50;
+const CREATIVE_COLS = 7;
+const CREATIVE_ROWS = 4;
+const CREATIVE_SLOTS_PER_PAGE = CREATIVE_COLS * CREATIVE_ROWS; // 28 slotów na stronę (17 zajętych + 11 wolnych na nowe bloki + obsługa kolejnych stron)
 
 // Wszystkie bloki i przedmioty dostępne w Katalogu Trybu Kreatywnego (/gm 1)
 const CREATIVE_ITEMS = [
@@ -26,8 +32,24 @@ const CREATIVE_ITEMS = [
     BLOCKS.KELP,
     BLOCKS.CORAL_PINK,
     BLOCKS.CORAL_CYAN,
-    BLOCKS.CORAL_GOLD
+    BLOCKS.CORAL_GOLD,
+    BLOCKS.FLESH,
+    BLOCKS.BONE,
+    BLOCKS.ACID,
+    BLOCKS.STOMACH_WALL
 ];
+
+// Automatyczne dodawanie ewentualnych przyszłych bloków z obiektu BLOCKS
+for (let key in BLOCKS) {
+    let val = BLOCKS[key];
+    if (val !== BLOCKS.AIR && !CREATIVE_ITEMS.includes(val)) {
+        CREATIVE_ITEMS.push(val);
+    }
+}
+
+function getCreativeTotalPages() {
+    return Math.max(1, Math.ceil((CREATIVE_ITEMS.length + 1) / CREATIVE_SLOTS_PER_PAGE));
+}
 
 function isCreativeModeActive() {
     return (typeof player !== 'undefined' && player.gameMode === 1);
@@ -84,25 +106,33 @@ function removeSelectedItem() {
 }
 
 function getInventoryLayout() {
-    let startX = Math.floor(canvas.width / 2 - UI_W / 2);
-    let startY = Math.floor(canvas.height / 2 - UI_H / 2);
+    let w = isCreativeModeActive() ? CREATIVE_UI_W : UI_W;
+    let h = isCreativeModeActive() ? CREATIVE_UI_H : UI_H;
+    let startX = Math.floor(canvas.width / 2 - w / 2);
+    let startY = Math.floor(canvas.height / 2 - h / 2);
     return {
+        w,
+        h,
         startX,
         startY,
         invX: startX + 320,
         invY: startY + 150,
-        hotY: startY + 365,
+        hotY: isCreativeModeActive() ? (startY + 395) : (startY + 365),
         craftX: startX + 320,
         craftY: startY + 42,
         armorX: startX + 35,
         talX: startX + 235,
         equipY: startY + 65,
-        // Układ dla Trybu Kreatywnego (/gm 1)
-        creativeCatalogX: startX + 320,
-        creativeCatalogY: startY + 54,
-        creativeInvY: startY + 235,
-        trashX: startX + 235,
-        trashY: startY + 365
+        // Rozszerzony układ dla Trybu Kreatywnego (/gm 1) - 28 slotów katalogu (7x4) + miejsce na kolejne strony
+        creativeCatalogX: startX + 305,
+        creativeCatalogY: startY + 50,
+        creativeStep: 48,
+        creativeInvX: startX + 305,
+        creativeInvY: startY + 272,
+        trashX: startX + 225,
+        trashY: startY + 395,
+        prevPageBtn: { x: startX + 565, y: startY + 18, w: 32, h: 22 },
+        nextPageBtn: { x: startX + 615, y: startY + 18, w: 32, h: 22 }
     };
 }
 
@@ -170,12 +200,29 @@ function handleInventoryClick(button) {
     const L = getInventoryLayout();
 
     if (isCreativeModeActive()) {
-        // 1. Kliknięcie w Katalog Bloków Trybu Kreatywnego (siatka 3x5)
-        for (let r = 0; r < 3; r++) {
-            for (let c = 0; c < 5; c++) {
-                let idx = r * 5 + c;
-                let sx = L.creativeCatalogX + c * SLOT_STEP;
-                let sy = L.creativeCatalogY + r * SLOT_STEP;
+        const totalPages = getCreativeTotalPages();
+        if (creativeCatalogPage >= totalPages) creativeCatalogPage = totalPages - 1;
+
+        // 0. Przyciski zmiany strony katalogu (jeśli jest więcej stron)
+        if (totalPages > 1) {
+            if (mouseX >= L.prevPageBtn.x && mouseX <= L.prevPageBtn.x + L.prevPageBtn.w &&
+                mouseY >= L.prevPageBtn.y && mouseY <= L.prevPageBtn.y + L.prevPageBtn.h) {
+                creativeCatalogPage = (creativeCatalogPage - 1 + totalPages) % totalPages;
+                return;
+            }
+            if (mouseX >= L.nextPageBtn.x && mouseX <= L.nextPageBtn.x + L.nextPageBtn.w &&
+                mouseY >= L.nextPageBtn.y && mouseY <= L.nextPageBtn.y + L.nextPageBtn.h) {
+                creativeCatalogPage = (creativeCatalogPage + 1) % totalPages;
+                return;
+            }
+        }
+
+        // 1. Kliknięcie w Katalog Bloków Trybu Kreatywnego (siatka 4x7 = 28 slotów na stronę)
+        for (let r = 0; r < CREATIVE_ROWS; r++) {
+            for (let c = 0; c < CREATIVE_COLS; c++) {
+                let idx = creativeCatalogPage * CREATIVE_SLOTS_PER_PAGE + r * CREATIVE_COLS + c;
+                let sx = L.creativeCatalogX + c * L.creativeStep;
+                let sy = L.creativeCatalogY + r * L.creativeStep;
                 if (mouseX >= sx && mouseX <= sx + SLOT_SIZE && mouseY >= sy && mouseY <= sy + SLOT_SIZE) {
                     if (idx < CREATIVE_ITEMS.length) {
                         let bType = CREATIVE_ITEMS[idx];
@@ -206,7 +253,7 @@ function handleInventoryClick(button) {
                             }
                         }
                     } else {
-                        // Kliknięcie w puste pole katalogu kasuje przedmiot z kursora
+                        // Kliknięcie w wolny slot katalogu odkłada/kasuje przedmiot z kursora
                         cursorItem = null;
                     }
                     return;
@@ -229,8 +276,8 @@ function handleInventoryClick(button) {
         // 3. Kliknięcie w podręczny ekwipunek w Creative (2 rzędy po 5 slotów)
         for (let r = 0; r < 2; r++) {
             for (let c = 0; c < 5; c++) {
-                let sx = L.invX + c * SLOT_STEP;
-                let sy = L.creativeInvY + r * SLOT_STEP;
+                let sx = L.creativeInvX + c * SLOT_STEP;
+                let sy = L.creativeInvY + r * L.creativeStep;
                 if (mouseX >= sx && mouseX <= sx + SLOT_SIZE && mouseY >= sy && mouseY <= sy + SLOT_SIZE) {
                     swapSlot('inv', r * 5 + c, button);
                     return;
@@ -240,7 +287,7 @@ function handleInventoryClick(button) {
 
         // 4. Kliknięcie w Pasek Szybkiego Wyboru (5 slotów)
         for (let c = 0; c < 5; c++) {
-            let sx = L.invX + c * SLOT_STEP;
+            let sx = L.creativeInvX + c * SLOT_STEP;
             let sy = L.hotY;
             if (mouseX >= sx && mouseX <= sx + SLOT_SIZE && mouseY >= sy && mouseY <= sy + SLOT_SIZE) {
                 swapSlot('hotbar', c, button);
@@ -275,7 +322,7 @@ function handleInventoryClick(button) {
 }
 
 function drawInvSlot(ctx, x, y, item, isSelected, labelHint = null, isCreativeCatalogSlot = false) {
-    ctx.fillStyle = isCreativeCatalogSlot ? '#7A8B99' : '#8B8B8B';
+    ctx.fillStyle = isCreativeCatalogSlot ? (item ? '#7A8B99' : '#64748B') : '#8B8B8B';
     ctx.fillRect(x, y, SLOT_SIZE, SLOT_SIZE);
     
     ctx.fillStyle = '#373737';
@@ -390,44 +437,47 @@ function drawInventoryUI(ctx) {
 
     if (isCreativeModeActive()) {
         // ==========================================
-        // GUI TRYBU KREATYWNEGO (/gm 1 - JAK W MINECRAFCIE)
+        // GUI TRYBU KREATYWNEGO (/gm 1 - WSZYSTKIE BLOKI + WOLNE SLOTY NA NOWE)
         // ==========================================
+        const totalPages = getCreativeTotalPages();
+        if (creativeCatalogPage >= totalPages) creativeCatalogPage = totalPages - 1;
+
         // Zakładka na górze okna
         ctx.fillStyle = '#8B8B8B';
-        ctx.fillRect(L.startX + 16, L.startY - 32, 290, 34);
+        ctx.fillRect(L.startX + 16, L.startY - 32, 320, 34);
         ctx.strokeStyle = '#333';
         ctx.lineWidth = 3;
-        ctx.strokeRect(L.startX + 16, L.startY - 32, 290, 34);
+        ctx.strokeRect(L.startX + 16, L.startY - 32, 320, 34);
         ctx.fillStyle = '#fde047';
         ctx.font = 'bold 14px Arial';
-        ctx.fillText("✨ Tryb Kreatywny - Wszystkie Zasoby", L.startX + 28, L.startY - 10);
+        ctx.fillText(`✨ Tryb Kreatywny - Katalog (${CREATIVE_ITEMS.length} bloków)`, L.startX + 26, L.startY - 10);
 
         // Główne tło okna Creative
         ctx.fillStyle = '#C6C6C6';
-        ctx.fillRect(L.startX, L.startY, UI_W, UI_H);
+        ctx.fillRect(L.startX, L.startY, L.w, L.h);
         ctx.strokeStyle = '#333'; 
         ctx.lineWidth = 4;
-        ctx.strokeRect(L.startX, L.startY, UI_W, UI_H);
+        ctx.strokeRect(L.startX, L.startY, L.w, L.h);
 
         // Lewa kolumna - Podgląd Gracza i status Nieśmiertelności
         ctx.fillStyle = '#222';
         ctx.font = 'bold 20px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(playerNick || "Gracz", L.startX + 155, L.startY + 32);
+        ctx.fillText(playerNick || "Gracz", L.startX + 148, L.startY + 32);
 
         ctx.fillStyle = '#15803d';
         ctx.font = 'bold 12px Arial';
-        ctx.fillText("★ NIEŚMIERTELNOŚĆ AKTYWNA (/gm 1)", L.startX + 155, L.startY + 52);
+        ctx.fillText("★ NIEŚMIERTELNOŚĆ AKTYWNA (/gm 1)", L.startX + 148, L.startY + 52);
         ctx.textAlign = 'left';
 
         ctx.fillStyle = '#1e1e1e';
-        ctx.fillRect(L.startX + 90, L.startY + 65, 130, 190);
+        ctx.fillRect(L.startX + 83, L.startY + 65, 130, 190);
         ctx.strokeStyle = '#eab308';
         ctx.lineWidth = 2;
-        ctx.strokeRect(L.startX + 90, L.startY + 65, 130, 190);
+        ctx.strokeRect(L.startX + 83, L.startY + 65, 130, 190);
 
         ctx.save();
-        ctx.translate(L.startX + 155, L.startY + 170); 
+        ctx.translate(L.startX + 148, L.startY + 170); 
         ctx.scale(5, 5); 
         drawCharacter(ctx, 0, 0, 1, 0, false, false, SKINS[selectedSkinIndex], null, false, false);
         ctx.restore();
@@ -435,9 +485,9 @@ function drawInventoryUI(ctx) {
         ctx.fillStyle = '#333';
         ctx.font = '13px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText("LPM - Weź nielimitowany blok (∞)", L.startX + 155, L.startY + 285);
-        ctx.fillText("PPM / Shift+LPM - Od razu na pasek", L.startX + 155, L.startY + 308);
-        ctx.fillText("Klawisz [E] - Zamknij katalog", L.startX + 155, L.startY + 331);
+        ctx.fillText("LPM - Weź nielimitowany blok (∞)", L.startX + 148, L.startY + 285);
+        ctx.fillText("PPM / Shift+LPM - Od razu na pasek", L.startX + 148, L.startY + 308);
+        ctx.fillText("Klawisz [E] - Zamknij katalog", L.startX + 148, L.startY + 331);
         ctx.textAlign = 'left';
 
         // Slot Kosza (Niszczenie przedmiotu jak w Minecrafcie)
@@ -451,16 +501,30 @@ function drawInventoryUI(ctx) {
             hoveredTrash = true;
         }
 
-        // Prawa kolumna - Katalog Wszystkich Bloków (siatka 3x5)
+        // Prawa kolumna - Katalog Wszystkich Bloków (siatka 4x7 = 28 slotów na stronę)
         ctx.fillStyle = '#1e293b';
         ctx.font = 'bold 15px Arial';
-        ctx.fillText("Katalog Bloków i Zasobów (∞)", L.creativeCatalogX, L.creativeCatalogY - 10);
+        ctx.fillText(`Katalog Bloków i Zasobów (∞) — Sloty: ${CREATIVE_ITEMS.length}/${CREATIVE_SLOTS_PER_PAGE * totalPages}`, L.creativeCatalogX, L.creativeCatalogY - 12);
 
-        for (let r = 0; r < 3; r++) {
-            for (let c = 0; c < 5; c++) {
-                let idx = r * 5 + c;
-                let sx = L.creativeCatalogX + c * SLOT_STEP;
-                let sy = L.creativeCatalogY + r * SLOT_STEP;
+        if (totalPages > 1) {
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(L.prevPageBtn.x, L.prevPageBtn.y, L.prevPageBtn.w, L.prevPageBtn.h);
+            ctx.fillRect(L.nextPageBtn.x, L.nextPageBtn.y, L.nextPageBtn.w, L.nextPageBtn.h);
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("◀", L.prevPageBtn.x + L.prevPageBtn.w / 2, L.prevPageBtn.y + 15);
+            ctx.fillText("▶", L.nextPageBtn.x + L.nextPageBtn.w / 2, L.nextPageBtn.y + 15);
+            ctx.fillStyle = '#1e293b';
+            ctx.fillText(`${creativeCatalogPage + 1}/${totalPages}`, (L.prevPageBtn.x + L.nextPageBtn.x + L.prevPageBtn.w) / 2, L.prevPageBtn.y + 15);
+            ctx.textAlign = 'left';
+        }
+
+        for (let r = 0; r < CREATIVE_ROWS; r++) {
+            for (let c = 0; c < CREATIVE_COLS; c++) {
+                let idx = creativeCatalogPage * CREATIVE_SLOTS_PER_PAGE + r * CREATIVE_COLS + c;
+                let sx = L.creativeCatalogX + c * L.creativeStep;
+                let sy = L.creativeCatalogY + r * L.creativeStep;
                 let catItem = idx < CREATIVE_ITEMS.length ? { type: CREATIVE_ITEMS[idx], count: 99 } : null;
                 drawInvSlot(ctx, sx, sy, catItem, false, null, true);
                 if (catItem && mouseX >= sx && mouseX <= sx + SLOT_SIZE && mouseY >= sy && mouseY <= sy + SLOT_SIZE) {
@@ -472,12 +536,12 @@ function drawInventoryUI(ctx) {
         // Podręczny ekwipunek gracza (2 rzędy po 5 slotów)
         ctx.fillStyle = '#222';
         ctx.font = 'bold 14px Arial';
-        ctx.fillText("Ekwipunek podręczny", L.invX, L.creativeInvY - 6);
+        ctx.fillText("Ekwipunek podręczny", L.creativeInvX, L.creativeInvY - 6);
         for (let r = 0; r < 2; r++) {
             for (let c = 0; c < 5; c++) {
                 let idx = r * 5 + c;
-                let sx = L.invX + c * SLOT_STEP;
-                let sy = L.creativeInvY + r * SLOT_STEP;
+                let sx = L.creativeInvX + c * SLOT_STEP;
+                let sy = L.creativeInvY + r * L.creativeStep;
                 drawInvSlot(ctx, sx, sy, inv[idx], false);
                 if (inv[idx] && mouseX >= sx && mouseX <= sx + SLOT_SIZE && mouseY >= sy && mouseY <= sy + SLOT_SIZE) {
                     hoveredBlockType = inv[idx].type;
@@ -488,9 +552,9 @@ function drawInventoryUI(ctx) {
         // Pasek szybkiego wyboru (5 slotów)
         ctx.fillStyle = '#222';
         ctx.font = 'bold 14px Arial';
-        ctx.fillText("Pasek szybkiego wyboru", L.invX, L.hotY - 6);
+        ctx.fillText("Pasek szybkiego wyboru", L.creativeInvX, L.hotY - 6);
         for (let c = 0; c < 5; c++) {
-            let sx = L.invX + c * SLOT_STEP;
+            let sx = L.creativeInvX + c * SLOT_STEP;
             let sy = L.hotY;
             drawInvSlot(ctx, sx, sy, hotbar[c], selectedSlotIndex === c, String(c + 1));
             if (hotbar[c] && mouseX >= sx && mouseX <= sx + SLOT_SIZE && mouseY >= sy && mouseY <= sy + SLOT_SIZE) {
@@ -512,10 +576,10 @@ function drawInventoryUI(ctx) {
     // GUI TRYBU PRZETRWANIA (/gm 0 - KLASYCZNY)
     // ==========================================
     ctx.fillStyle = '#C6C6C6';
-    ctx.fillRect(L.startX, L.startY, UI_W, UI_H);
+    ctx.fillRect(L.startX, L.startY, L.w, L.h);
     ctx.strokeStyle = '#333'; 
     ctx.lineWidth = 4;
-    ctx.strokeRect(L.startX, L.startY, UI_W, UI_H);
+    ctx.strokeRect(L.startX, L.startY, L.w, L.h);
     
     ctx.fillStyle = '#222';
     ctx.font = 'bold 20px Arial';

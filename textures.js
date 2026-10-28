@@ -131,5 +131,41 @@ function initTextures() {
         cx.fillRect(Math.floor(Math.random()*10)*2, Math.floor(Math.random()*10)*2, 2, 2);
     }
     TEXTURES[BLOCKS.CORAL_GOLD] = c;
+
+    // Tkanka Żołądka (Flesh)
+    c = document.createElement('canvas'); c.width = 20; c.height = 20; cx = c.getContext('2d');
+    cx.fillStyle = '#8B1E24'; cx.fillRect(0,0,20,20);
+    for(let i=0; i<40; i++) {
+        cx.fillStyle = Math.random()>0.4 ? '#B23A48' : '#5E1116';
+        cx.fillRect(Math.floor(Math.random()*10)*2, Math.floor(Math.random()*10)*2, 4, 2);
+    }
+    TEXTURES[BLOCKS.FLESH] = c;
+
+    // Kość (Bone - żebra w żołądku)
+    c = document.createElement('canvas'); c.width = 20; c.height = 20; cx = c.getContext('2d');
+    cx.fillStyle = '#EAE0C8'; cx.fillRect(0,0,20,20);
+    for(let i=0; i<30; i++) {
+        cx.fillStyle = Math.random()>0.5 ? '#D4C5A1' : '#FFFDF7';
+        cx.fillRect(Math.floor(Math.random()*10)*2, Math.floor(Math.random()*10)*2, 2, 2);
+    }
+    TEXTURES[BLOCKS.BONE] = c;
+
+    // Kwas Żołądkowy (Acid)
+    c = document.createElement('canvas'); c.width = 20; c.height = 20; cx = c.getContext('2d');
+    cx.fillStyle = 'rgba(115, 195, 15, 0.72)'; cx.fillRect(0,0,20,20);
+    cx.fillStyle = 'rgba(210, 255, 90, 0.65)';
+    cx.fillRect(2, 4, 6, 2);
+    cx.fillRect(11, 12, 6, 2);
+    cx.fillRect(6, 16, 4, 2);
+    TEXTURES[BLOCKS.ACID] = c;
+
+    // Ściana Żołądka (Niezniszczalna powłoka zewnętrzna)
+    c = document.createElement('canvas'); c.width = 20; c.height = 20; cx = c.getContext('2d');
+    cx.fillStyle = '#38070E'; cx.fillRect(0,0,20,20);
+    for(let i=0; i<45; i++) {
+        cx.fillStyle = Math.random()>0.5 ? '#240308' : '#520E18';
+        cx.fillRect(Math.floor(Math.random()*10)*2, Math.floor(Math.random()*10)*2, 2, 2);
+    }
+    TEXTURES[BLOCKS.STOMACH_WALL] = c;
 }
 initTextures();

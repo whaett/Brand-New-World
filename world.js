@@ -299,7 +299,75 @@ function generateWorld(seedValue = currentWorldSeed) {
     }
 }
 
+let stomachMap = [];
+
+function generateStomachWorld() {
+    stomachMap = [];
+    const cx = (STOMACH_WIDTH - 1) / 2;
+    const cy = (STOMACH_HEIGHT - 1) / 2 + 1;
+    const rx = (STOMACH_WIDTH - 6) / 2;
+    const ry = (STOMACH_HEIGHT - 6) / 2;
+
+    for (let x = 0; x < STOMACH_WIDTH; x++) {
+        stomachMap[x] = [];
+        for (let y = 0; y < STOMACH_HEIGHT; y++) {
+            if (x <= 1 || x >= STOMACH_WIDTH - 2 || y <= 1 || y >= STOMACH_HEIGHT - 2) {
+                stomachMap[x][y] = BLOCKS.STOMACH_WALL;
+                continue;
+            }
+            let nx = (x - cx) / rx;
+            let ny = (y - cy) / ry;
+            let dist = nx * nx + ny * ny;
+
+            if (dist > 1.05) {
+                stomachMap[x][y] = BLOCKS.STOMACH_WALL;
+            } else if (dist > 0.72) {
+                stomachMap[x][y] = BLOCKS.FLESH;
+            } else if (y >= STOMACH_HEIGHT - 5) {
+                stomachMap[x][y] = BLOCKS.ACID;
+            } else {
+                stomachMap[x][y] = BLOCKS.AIR;
+            }
+        }
+    }
+
+    // Żebra z kości wystające ze ścian żołądka
+    const ribCols = [7, 11, 15, 22, 26, 30];
+    for (let rxCol of ribCols) {
+        for (let y = 5; y <= 9; y++) {
+            if (stomachMap[rxCol][y] === BLOCKS.AIR) {
+                stomachMap[rxCol][y] = BLOCKS.BONE;
+            }
+        }
+    }
+
+    // Bezpieczne wysepki z kości i tkanki nad kwasem żołądkowym (na środku i po bokach)
+    for (let x = 15; x <= 22; x++) {
+        stomachMap[x][15] = (x === 16 || x === 21) ? BLOCKS.BONE : BLOCKS.FLESH;
+        stomachMap[x][16] = BLOCKS.FLESH;
+    }
+    for (let x = 8; x <= 11; x++) {
+        stomachMap[x][16] = BLOCKS.BONE;
+    }
+    for (let x = 26; x <= 29; x++) {
+        stomachMap[x][16] = BLOCKS.BONE;
+    }
+
+    // Górny Przełyk (Wyjście z Żołądka) na środku sufitu (x = 17..20)
+    // Zatkany czopem z Tkanki Żołądka (y = 2..5), po przekopaniu którego gracz wydostaje się na zewnątrz!
+    for (let x = 17; x <= 20; x++) {
+        stomachMap[x][0] = BLOCKS.AIR;
+        stomachMap[x][1] = BLOCKS.AIR;
+        stomachMap[x][2] = BLOCKS.FLESH;
+        stomachMap[x][3] = BLOCKS.FLESH;
+        stomachMap[x][4] = BLOCKS.FLESH;
+        stomachMap[x][5] = BLOCKS.AIR;
+        stomachMap[x][6] = BLOCKS.AIR;
+    }
+}
+
 generateWorld(currentWorldSeed);
+generateStomachWorld();
 
 function isWaterLike(block) {
     return block === BLOCKS.WATER;
@@ -320,7 +388,7 @@ function isSubmergedTile(x, y) {
 }
 
 function isPassableBlock(block) {
-    return block === BLOCKS.AIR || block === BLOCKS.WATER || block === BLOCKS.KELP;
+    return block === BLOCKS.AIR || block === BLOCKS.WATER || block === BLOCKS.KELP || block === BLOCKS.ACID;
 }
 
 function getSurfaceY(tx) {
@@ -345,15 +413,29 @@ function isOceanAt(tx) {
 }
 
 function getTile(x, y) { 
+    if (typeof player !== 'undefined' && player.inStomach) {
+        return (x >= 0 && x < STOMACH_WIDTH && y >= 0 && y < STOMACH_HEIGHT && stomachMap[x]) ? stomachMap[x][y] : BLOCKS.STOMACH_WALL;
+    }
     return (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) ? map[x][y] : BLOCKS.AIR; 
 }
 
-function setTile(x, y, block, broadcast = true) { 
+function setTile(x, y, block, broadcast = true, forStomach = null) { 
+    let inStom = (forStomach !== null) ? Boolean(forStomach) : Boolean(typeof player !== 'undefined' && player.inStomach);
+    if (inStom) {
+        if (x >= 0 && x < STOMACH_WIDTH && y >= 0 && y < STOMACH_HEIGHT && stomachMap[x]) {
+            if (stomachMap[x][y] === BLOCKS.STOMACH_WALL && block === BLOCKS.AIR) return;
+            stomachMap[x][y] = block;
+            if (broadcast && typeof sendBlockChange === 'function') {
+                sendBlockChange(x, y, block, true);
+            }
+        }
+        return;
+    }
     if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
         map[x][y] = block;
         modifiedTiles[`${x},${y}`] = block;
         if (broadcast && typeof sendBlockChange === 'function') {
-            sendBlockChange(x, y, block);
+            sendBlockChange(x, y, block, false);
         }
     }
 }
@@ -430,7 +512,7 @@ function hasLineOfSight(startX, startY, endX, endY) {
         if (px >= pLeft && px <= pRight && py >= pTop && py <= pBottom) continue;
         
         let tile = getTile(tx, ty);
-        if (tile !== BLOCKS.AIR && tile !== BLOCKS.WATER && tile !== BLOCKS.KELP) return false;
+        if (tile !== BLOCKS.AIR && tile !== BLOCKS.WATER && tile !== BLOCKS.KELP && tile !== BLOCKS.ACID) return false;
     }
     return true;
 }
@@ -452,6 +534,25 @@ function isBlockVisibleToPlayer(targetTx, targetTy) {
     ];
     for (let pt of points) {
         if (hasLineOfSight(eyeX, eyeY, pt.x, pt.y)) return true;
+    }
+    return false;
+}
+
+// Sprawdza zasadę 8-sąsiedztwa (góra, dół, lewo, prawo oraz 4 skosy) — blokada budowania w powietrzu
+function hasNeighborBlock(targetTx, targetTy) {
+    const maxW = (typeof player !== 'undefined' && player.inStomach) ? STOMACH_WIDTH : MAP_WIDTH;
+    const maxH = (typeof player !== 'undefined' && player.inStomach) ? STOMACH_HEIGHT : MAP_HEIGHT;
+    for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+            if (dx === 0 && dy === 0) continue;
+            let nx = targetTx + dx;
+            let ny = targetTy + dy;
+            if (nx < 0 || nx >= maxW || ny < 0 || ny >= maxH) continue;
+            let neighbor = getTile(nx, ny);
+            if (neighbor !== BLOCKS.AIR && neighbor !== BLOCKS.WATER && neighbor !== BLOCKS.ACID) {
+                return true;
+            }
+        }
     }
     return false;
 }
