@@ -28,28 +28,94 @@ body {
     background-color: #87CEEB;
 }
 
-/* MENU */
+/* MENU Z ŻYWYM TŁEM ŚWIATA GRY I DUŻYM LOGO BRAND NEW WORLD */
 #mainMenu {
     position: absolute;
     top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0, 0, 0, 0.85);
+    background: radial-gradient(circle at center, rgba(15, 23, 42, 0.18) 0%, rgba(10, 15, 28, 0.58) 100%);
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
     z-index: 20;
     cursor: default;
+    padding: 15px;
+    box-sizing: border-box;
 }
+
+.game-logo-banner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 22px;
+    text-align: center;
+    animation: logoFloat 3.6s ease-in-out infinite;
+    pointer-events: none;
+}
+
+.logo-icons-row {
+    font-size: 24px;
+    letter-spacing: 8px;
+    margin-bottom: 4px;
+    filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.85));
+}
+
+.big-game-logo {
+    margin: 0;
+    font-size: clamp(42px, 6.2vw, 78px);
+    font-weight: 900;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    font-family: 'Segoe UI Black', 'Impact', 'Arial Black', sans-serif;
+    color: #fef08a;
+    background: linear-gradient(180deg, #fffbeb 0%, #fde047 38%, #f59e0b 75%, #d97706 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0px 4px 0px #78350f)
+            drop-shadow(0px 7px 0px #1e293b)
+            drop-shadow(0px 10px 18px rgba(0, 0, 0, 0.85));
+}
+
+.logo-subtitle {
+    margin-top: 8px;
+    background: linear-gradient(90deg, rgba(15, 23, 42, 0.88), rgba(30, 64, 175, 0.88), rgba(15, 23, 42, 0.88));
+    color: #38bdf8;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 2.5px;
+    padding: 5px 20px;
+    border-radius: 999px;
+    border: 2px solid #f59e0b;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.75);
+    text-shadow: 1px 1px 2px #000;
+}
+
+@keyframes logoFloat {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-6px); }
+}
+
 .menu-screen {
     display: flex;
     flex-direction: column;
     align-items: center;
+    background: linear-gradient(160deg, rgba(15, 23, 42, 0.82), rgba(30, 41, 59, 0.88));
+    border: 3px solid #f59e0b;
+    outline: 3px solid rgba(15, 23, 42, 0.95);
+    border-radius: 16px;
+    padding: 24px 36px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(6px);
 }
+
 .menu-title {
-    font-size: 46px;
-    margin-bottom: 25px;
+    font-size: 28px;
+    color: #f8fafc;
+    margin-top: 0;
+    margin-bottom: 18px;
     text-shadow: 2px 2px 0px #000;
     text-align: center;
+    letter-spacing: 0.5px;
 }
 .nick-hint {
     font-size: 15px;
@@ -578,7 +644,7 @@ body {
 /* PRZYCISK KOPIOWANIA LINKU ZAPROSZENIA */
 #btnCopyInviteLink {
     position: absolute;
-    top: 102px;
+    top: 124px;
     right: 28px;
     z-index: 16;
     background: linear-gradient(145deg, #2563eb, #1d4ed8);

@@ -256,6 +256,8 @@ function getActivePlayersSnapshot(excludeId = null) {
             isAdmin: Boolean(player.isAdmin),
             isSandworm: Boolean(player.isSandworm),
             inStomach: Boolean(player.inStomach),
+            isPoisoned: Boolean(player.inAcid || player.acidPoisonTimer > 0),
+            poisonDamageEffect: player.poisonDamageEffect || 0,
             wormSegments: (player.isSandworm && Array.isArray(player.wormSegments)) ? player.wormSegments.map(s => ({ x: Math.round(s.x), y: Math.round(s.y) })) : null,
             isHost: isRoomHost,
             inGame: true
@@ -284,6 +286,8 @@ function getActivePlayersSnapshot(excludeId = null) {
                 isAdmin: Boolean(rp.isAdmin),
                 isSandworm: Boolean(rp.isSandworm),
                 inStomach: Boolean(rp.inStomach),
+                isPoisoned: Boolean(rp.isPoisoned),
+                poisonDamageEffect: rp.poisonDamageEffect || 0,
                 wormSegments: rp.wormSegments || null,
                 isHost: Boolean(rp.isHost),
                 inGame: rp.inGame !== false
@@ -291,6 +295,66 @@ function getActivePlayersSnapshot(excludeId = null) {
         }
     }
     return snapshot;
+}
+
+function getDeersSnapshot() {
+    if (typeof deers === 'undefined') return [];
+    return deers.map(d => ({
+        id: d.id,
+        variant: d.variant || 'lania',
+        x: Math.round(d.x),
+        y: Math.round(d.y),
+        vx: Number((d.vx || 0).toFixed(2)),
+        vy: Number((d.vy || 0).toFixed(2)),
+        direction: d.direction || 1,
+        walkFrame: Number((d.walkFrame || 0).toFixed(2)),
+        state: d.state || 'walk',
+        grazeProgress: Number((d.grazeProgress || 0).toFixed(2))
+    }));
+}
+
+function applyDeersSnapshot(deerList) {
+    if (!Array.isArray(deerList) || typeof deers === 'undefined') return;
+    let newDeers = [];
+    for (let wd of deerList) {
+        let existing = deers.find(d => d.id && d.id === wd.id);
+        let dims = (typeof getDeerDimensions === 'function') ? getDeerDimensions(wd.variant) : { width: 24, height: 20, speed: 0.84 };
+        if (existing) {
+            if (Math.hypot(existing.x - wd.x, existing.y - wd.y) > 80) {
+                existing.x = wd.x;
+                existing.y = wd.y;
+            } else {
+                existing.x += (wd.x - existing.x) * 0.35;
+                existing.y += (wd.y - existing.y) * 0.35;
+            }
+            existing.variant = wd.variant || existing.variant;
+            existing.vx = wd.vx;
+            existing.vy = wd.vy;
+            existing.direction = wd.direction || 1;
+            existing.state = wd.state || 'walk';
+            existing.grazeProgress = wd.grazeProgress || 0;
+            newDeers.push(existing);
+        } else {
+            newDeers.push({
+                id: wd.id || ("deer_" + Math.random().toString(36).substring(2, 8)),
+                variant: wd.variant || 'lania',
+                x: wd.x,
+                y: wd.y,
+                vx: wd.vx || 0,
+                vy: wd.vy || 0,
+                width: dims.width,
+                height: dims.height,
+                baseSpeed: dims.speed,
+                direction: wd.direction || 1,
+                walkFrame: wd.walkFrame || 0,
+                grounded: true,
+                state: wd.state || 'walk',
+                stateTimer: 90,
+                grazeProgress: wd.grazeProgress || 0
+            });
+        }
+    }
+    deers = newDeers;
 }
 
 function getWildPigsSnapshot() {
@@ -403,9 +467,11 @@ function sendWorldSyncResponse(targetPlayerId, sourceConn) {
         senderId: myPlayerId,
         targetId: targetPlayerId || null,
         seed: currentWorldSeed,
+        worldTime: typeof worldTime === 'number' ? Number(worldTime.toFixed(4)) : 0.34,
         mods: modifiedTiles,
         playersSnapshot: getActivePlayersSnapshot(targetPlayerId),
-        wildPigs: getWildPigsSnapshot()
+        wildPigs: getWildPigsSnapshot(),
+        deers: getDeersSnapshot()
     };
     seenPacketIds.add(welcomePacket.pktId);
     if (sourceConn && sourceConn.open) {
@@ -457,6 +523,11 @@ function handleNetworkPacket(data, sourceConn) {
         if (isFirstSync && data.seed && data.seed !== currentWorldSeed) {
             generateWorld(data.seed);
         }
+        if (typeof data.worldTime === 'number') {
+            worldTime = data.worldTime;
+            currentDayPhaseName = getDayPhaseId(worldTime);
+            lastTimeUpdateMs = performance.now();
+        }
         if (data.mods) {
             for (let key in data.mods) {
                 let parts = key.split(',');
@@ -473,6 +544,9 @@ function handleNetworkPacket(data, sourceConn) {
         }
         if (data.wildPigs) {
             applyWildPigsSnapshot(data.wildPigs);
+        }
+        if (data.deers) {
+            applyDeersSnapshot(data.deers);
         }
         if (isFirstSync && !isPlaying) {
             respawnPlayerAtSpawn();
@@ -501,9 +575,30 @@ function handleNetworkPacket(data, sourceConn) {
         if (data.playersSnapshot) {
             applyPlayersSnapshot(data.playersSnapshot);
         }
+        if (typeof data.worldTime === 'number') {
+            let diff = Math.abs(worldTime - data.worldTime);
+            if (diff > 0.015 && diff < 0.985) {
+                worldTime = data.worldTime;
+                currentDayPhaseName = getDayPhaseId(worldTime);
+            }
+        }
         if (data.wildPigs) {
             applyWildPigsSnapshot(data.wildPigs);
         }
+        if (data.deers) {
+            applyDeersSnapshot(data.deers);
+        }
+    }
+    else if (data.type === 'time_sync') {
+        if (typeof data.worldTime === 'number') {
+            worldTime = data.worldTime;
+            currentDayPhaseName = getDayPhaseId(worldTime);
+            lastTimeUpdateMs = performance.now();
+            if (data.announceText) {
+                showSystemNotification(data.announceText, data.color || '#fde047', 220, true);
+            }
+        }
+        relayFromHost(data, sourceConn);
     }
     else if (data.type === 'player_leave') {
         removeRemotePlayer(data.senderId);
@@ -697,6 +792,8 @@ function handleNetworkPacket(data, sourceConn) {
             isAdmin: Boolean(data.isAdmin),
             isSandworm: Boolean(data.isSandworm),
             inStomach: Boolean(data.inStomach),
+            isPoisoned: Boolean(data.isPoisoned),
+            poisonDamageEffect: data.poisonDamageEffect || (prev && prev.poisonDamageEffect > 0 ? prev.poisonDamageEffect - 1 : 0),
             wormSegments: Array.isArray(data.wormSegments) ? data.wormSegments : (prev && prev.wormSegments ? prev.wormSegments : null),
             isHost: Boolean(data.isHost),
             inGame: true,
@@ -802,6 +899,17 @@ function sendWaveInteractionPacket(targetId, targetNick) {
     });
 }
 
+function sendTimeSyncPacket(newWorldTime, announceText = null, color = '#fde047') {
+    if (!roomCode) return;
+    broadcastPacket({
+        type: 'time_sync',
+        senderId: myPlayerId,
+        worldTime: Number(newWorldTime.toFixed(4)),
+        announceText: announceText,
+        color: color
+    });
+}
+
 function sendChatMessagePacket(text, msgType = 'chat') {
     if (!roomCode) return;
     broadcastPacket({
@@ -857,6 +965,8 @@ function sendPlayerState() {
         isAdmin: Boolean(player.isAdmin),
         isSandworm: Boolean(player.isSandworm),
         inStomach: Boolean(player.inStomach),
+        isPoisoned: Boolean(player.inAcid || player.acidPoisonTimer > 0),
+        poisonDamageEffect: player.poisonDamageEffect || 0,
         wormSegments: (player.isSandworm && Array.isArray(player.wormSegments)) ? player.wormSegments.map(s => ({ x: Math.round(s.x), y: Math.round(s.y) })) : null,
         isHost: isRoomHost
     });
@@ -960,9 +1070,11 @@ setInterval(() => {
             type: 'roster_sync',
             senderId: myPlayerId,
             seed: currentWorldSeed,
+            worldTime: typeof worldTime === 'number' ? Number(worldTime.toFixed(4)) : 0.34,
             mods: modifiedTiles,
             playersSnapshot: getActivePlayersSnapshot(null),
-            wildPigs: getWildPigsSnapshot()
+            wildPigs: getWildPigsSnapshot(),
+        deers: getDeersSnapshot()
         });
     }
 

@@ -24,11 +24,11 @@ const SEA_LEVEL = 64;
 const STOMACH_WIDTH = 38;
 const STOMACH_HEIGHT = 24;
 
-// Zbalansowana, dynamiczniejsza fizyka (v1.5)
-const GRAVITY = 0.22; 
-const MAX_FALL_SPEED = 14; 
-const CAMERA_SPEED = 0.14; 
-const REGEN_TIME = 150; 
+// Zbalansowana, żwawsza fizyka (stałe tempo)
+const GRAVITY = 0.185; 
+const MAX_FALL_SPEED = 13; 
+const CAMERA_SPEED = 0.125; 
+const REGEN_TIME = 160; 
 
 const HOTBAR_SLOTS = 5;
 const MAX_HOTBAR_SLOTS = 5;
@@ -86,20 +86,20 @@ const BLOCK_HARDNESS = {
     [BLOCKS.AIR]: 0, 
     [BLOCKS.WATER]: 0,
     [BLOCKS.ACID]: 0,
-    [BLOCKS.KELP]: 6,
-    [BLOCKS.LEAVES]: 8, 
-    [BLOCKS.DIRT]: 15, 
-    [BLOCKS.GRASS]: 15,
-    [BLOCKS.SAND]: 15, 
-    [BLOCKS.FLESH]: 16,
-    [BLOCKS.CACTUS]: 18, 
-    [BLOCKS.CORAL_PINK]: 22,
-    [BLOCKS.CORAL_CYAN]: 22,
-    [BLOCKS.CORAL_GOLD]: 22,
-    [BLOCKS.WOOD]: 32, 
-    [BLOCKS.BONE]: 36,
-    [BLOCKS.STONE]: 65, 
-    [BLOCKS.DIAMOND]: 110,
+    [BLOCKS.KELP]: 7,
+    [BLOCKS.LEAVES]: 9, 
+    [BLOCKS.DIRT]: 17, 
+    [BLOCKS.GRASS]: 17,
+    [BLOCKS.SAND]: 17, 
+    [BLOCKS.FLESH]: 17,
+    [BLOCKS.CACTUS]: 21, 
+    [BLOCKS.CORAL_PINK]: 25,
+    [BLOCKS.CORAL_CYAN]: 25,
+    [BLOCKS.CORAL_GOLD]: 25,
+    [BLOCKS.WOOD]: 36, 
+    [BLOCKS.BONE]: 40,
+    [BLOCKS.STONE]: 75, 
+    [BLOCKS.DIAMOND]: 125,
     [BLOCKS.STOMACH_WALL]: 999999
 };
 
@@ -119,6 +119,34 @@ let pvpHitCooldown = 0;
 let miningX = -1, miningY = -1, miningProgress = 0, pickaxeSwing = 0;
 let globalTick = 0;
 const keys = {};
+
+// ==========================================
+// CYKL DNIA I NOCY (PORY DNIA ZMIENIAJĄCE SIĘ CO KILKA MINUT)
+// ==========================================
+// Pełny cykl dobowy (24h w grze) trwa 6 minut (360 sekund), czyli nowa pora dnia nastaje co ok. 1.5 minuty!
+const DAY_CYCLE_DURATION_MS = 360 * 1000;
+let worldTime = 0.34; // Start ok. godziny 08:10 rano (słoneczny poranek/dzień)
+let lastTimeUpdateMs = performance.now();
+let currentDayPhaseName = 'day'; // 'sunrise' | 'day' | 'sunset' | 'night'
+
+function getDayPhaseId(t) {
+    if (t >= 0.21 && t < 0.31) return 'sunrise';
+    if (t >= 0.31 && t < 0.69) return 'day';
+    if (t >= 0.69 && t < 0.81) return 'sunset';
+    return 'night';
+}
+
+function getDayPhaseDisplayInfo(t) {
+    let totalMinutes = Math.floor(((t % 1 + 1) % 1) * 24 * 60);
+    let hh = String(Math.floor(totalMinutes / 60) % 24).padStart(2, '0');
+    let mm = String(totalMinutes % 60).padStart(2, '0');
+    let clockStr = `${hh}:${mm}`;
+    let phase = getDayPhaseId(t);
+    if (phase === 'sunrise') return { icon: '🌅', label: 'Wschód słońca', clock: clockStr, color: '#fb923c' };
+    if (phase === 'day')     return { icon: '☀️', label: 'Dzień',         clock: clockStr, color: '#fde047' };
+    if (phase === 'sunset')  return { icon: '🌇', label: 'Zachód słońca', clock: clockStr, color: '#f97316' };
+    return { icon: '🌙', label: 'Noc', clock: clockStr, color: '#93c5fd' };
+}
 
 function showSystemNotification(msg, color = "#ffeb3b", duration = 210, alsoLogToChat = true) {
     systemMessage = msg;

@@ -7,7 +7,7 @@ let spawnY = getSurfaceY(spawnTileX);
 
 const player = {
     x: spawnX, y: spawnY, width: 16, height: 24,
-    vx: 0, vy: 0, speed: 2.35, jumpPower: 5.45, grounded: false,
+    vx: 0, vy: 0, speed: 1.9, jumpPower: 4.95, grounded: false,
     direction: 1, walkFrame: 0, hp: 5, maxHp: 5, dead: false, damageEffect: 0,
     fallStartY: spawnY, invulTimer: 0, ridingPig: null, bombCooldown: 0,
     inWater: false, headSubmerged: false, inKelp: false,
@@ -45,16 +45,159 @@ let cameraX = player.x;
 let cameraY = player.y; 
 let regenTimer = 0; 
 let pigs = []; 
+let deers = [];
 let bombs = [];
 let waterBubbles = [];
 let splashParticles = [];
 
+spawnInitialForestDeers();
+
 let sandworm = { 
     active: false, x: 0, y: 0, targetX: 0, targetY: 0, 
-    radius: 12, segments: [], numSegments: 15, speed: 4.4, 
+    radius: 12, segments: [], numSegments: 15, speed: 3.9, 
     attackCooldown: 0, state: 'idle',
     ownerId: null, isRemote: false, lastSyncTime: 0
 };
+
+function generateDeerId() {
+    return "deer_" + myPlayerId + "_" + Math.random().toString(36).substring(2, 8);
+}
+
+function getDeerDimensions(variant) {
+    if (variant === 'byk') return { width: 28, height: 24, speed: 0.68 };
+    if (variant === 'lania') return { width: 24, height: 20, speed: 0.74 };
+    return { width: 16, height: 15, speed: 0.80 }; // 'ciele'
+}
+
+// Jelenie swobodnie przechodzą na tle pni drzew i liści w lesie (nie blokują się między drzewami!),
+// ale kolidują z ziemią, trawą, kamieniem, piaskiem i innymi twardymi blokami terenu.
+function isPassableForDeer(block) {
+    return block === BLOCKS.AIR || block === BLOCKS.WATER || block === BLOCKS.KELP ||
+           block === BLOCKS.ACID || block === BLOCKS.WOOD || block === BLOCKS.LEAVES;
+}
+
+function checkDeerCollision(x, y, w, h) {
+    let left = Math.floor(x / TILE_SIZE);
+    let right = Math.floor((x + w - 0.1) / TILE_SIZE);
+    let top = Math.floor(y / TILE_SIZE);
+    let bottom = Math.floor((y + h - 0.1) / TILE_SIZE);
+    for (let tx = left; tx <= right; tx++) {
+        for (let ty = top; ty <= bottom; ty++) {
+            if (!isPassableForDeer(getTile(tx, ty))) return true;
+        }
+    }
+    return false;
+}
+
+// Wyszukuje bezpieczną, płaską pozycję nad ziemią bez kolizji z blokami i poza wodą
+function findSafeDeerSpawnPos(baseTx, variant) {
+    const dims = getDeerDimensions(variant);
+    for (let offset = 0; offset <= 10; offset++) {
+        let dirs = offset === 0 ? [0] : [-offset, offset];
+        for (let d of dirs) {
+            let tx = baseTx + d;
+            if (tx < 12 || tx >= MAP_WIDTH - 12) continue;
+            let sy = surfaceHeights[tx];
+            if (!sy || sy >= SEA_LEVEL - 1 || sy < 6) continue;
+            let groundBlk = map[tx] ? map[tx][sy] : BLOCKS.AIR;
+            if (groundBlk !== BLOCKS.GRASS && groundBlk !== BLOCKS.DIRT) continue;
+            // Unikaj stromych uskoków (więcej niż 1 blok różnicy wysokości obok)
+            if (Math.abs((surfaceHeights[tx + 1] || sy) - sy) > 1) continue;
+
+            let spawnX = tx * TILE_SIZE;
+            let spawnY = sy * TILE_SIZE - dims.height;
+
+            // Jeśli teren obok jest o 1 blok wyżej, podnieś pozycję startową o 1 blok
+            if (checkDeerCollision(spawnX, spawnY, dims.width, dims.height)) {
+                spawnY -= TILE_SIZE;
+            }
+            if (!checkDeerCollision(spawnX, spawnY, dims.width, dims.height)) {
+                return { x: spawnX, y: spawnY, tx: tx };
+            }
+        }
+    }
+    return null;
+}
+
+// Losuje skład grupy jeleni:
+// - 65% szans: pojedynczy osobnik (Byk, Łania lub rzadziej Cielę)
+// - 25% szans: dwójka (Łania + Cielę lub Byk + Łania)
+// - 10% szans: trójka / pełna rodzinka (Byk + Łania + Cielę)
+function pickDeerSpawnGroup() {
+    let r = Math.random();
+    if (r < 0.72) {
+        let vRand = Math.random();
+        if (vRand < 0.45) return ['lania'];
+        if (vRand < 0.85) return ['byk'];
+        return ['ciele'];
+    } else if (r < 0.94) {
+        return Math.random() < 0.55 ? ['lania', 'ciele'] : ['byk', 'lania'];
+    } else {
+        return ['byk', 'lania', 'ciele'];
+    }
+}
+
+function spawnDeerGroupAtTile(baseTx) {
+    let group = pickDeerSpawnGroup();
+    let spawned = 0;
+    for (let idx = 0; idx < group.length; idx++) {
+        let variant = group[idx];
+        let safePos = findSafeDeerSpawnPos(baseTx + idx * 3, variant);
+        if (safePos) {
+            deers.push(createDeerEntity(safePos.x, safePos.y, variant));
+            spawned++;
+        }
+    }
+    return spawned;
+}
+
+function createDeerEntity(x, y, variant = 'lania') {
+    const dims = getDeerDimensions(variant);
+    return {
+        id: generateDeerId(),
+        variant: variant, // 'byk' | 'lania' | 'ciele'
+        x: x,
+        y: y,
+        vx: 0,
+        vy: 0,
+        width: dims.width,
+        height: dims.height,
+        baseSpeed: dims.speed,
+        direction: Math.random() > 0.5 ? 1 : -1,
+        walkFrame: Math.random() * 10,
+        grounded: false,
+        state: 'walk', // 'walk' | 'idle' | 'graze'
+        stateTimer: 90 + Math.floor(Math.random() * 140),
+        grazeProgress: 0,
+        jumpCooldown: 0
+    };
+}
+
+function spawnInitialForestDeers() {
+    deers = [];
+    let forestCenters = [];
+    for (let tx = 60; tx < MAP_WIDTH - 60; tx += 45) {
+        if (isForestAt(tx) && countTreesNearTileX(tx, 16) >= 3) {
+            let sy = surfaceHeights[tx];
+            if (sy < SEA_LEVEL - 1 && map[tx] && map[tx][sy] === BLOCKS.GRASS) {
+                forestCenters.push(tx);
+                tx += 180; // Duży odstęp — jelenie są rzadkim widokiem
+            }
+        }
+    }
+    if (forestCenters.length < 2) {
+        for (let tx = 80; tx < MAP_WIDTH - 80; tx += 220) {
+            if (isForestAt(tx) && surfaceHeights[tx] < SEA_LEVEL - 1) {
+                forestCenters.push(tx);
+                if (forestCenters.length >= 2) break;
+            }
+        }
+    }
+
+    for (let i = 0; i < Math.min(2, forestCenters.length); i++) {
+        spawnDeerGroupAtTile(forestCenters[i]);
+    }
+}
 
 function generatePigId() {
     return "pig_" + myPlayerId + "_" + Math.random().toString(36).substring(2, 8);
@@ -69,6 +212,26 @@ function respawnPlayerAtSpawn() {
     player.fallStartY = player.y;
     cameraX = player.x + player.width / 2 - (canvas.width / SCALE) / 2;
     cameraY = player.y + player.height / 2 - (canvas.height / SCALE) / 2;
+}
+
+// Komenda /spawn — teleportuje gracza pod Totem na Spawnie
+function teleportPlayerToSpawn() {
+    if (player.dead) return;
+    if (player.inStomach) {
+        showSystemNotification("Nie możesz użyć /spawn wewnątrz żołądka czerwia! Przekop przełyk!", "#ff5252", 210, true);
+        return;
+    }
+    if (player.ridingPig) {
+        dismountCurrentPig(false, true, false);
+    }
+    player.isSwimming = false;
+    player.swimToggle = false;
+    miningX = -1;
+    miningY = -1;
+    miningProgress = 0;
+    respawnPlayerAtSpawn();
+    showSystemNotification("🗿 Przeteleportowano pod Totem na Spawnie (/spawn)!", "#4caf50", 210, true);
+    if (typeof sendPlayerState === 'function') sendPlayerState();
 }
 
 // Bezpieczne uniesienie świni ponad taflę wody, aby nigdy nie wpadała w pętlę wielokrotnego pluskania!
@@ -485,7 +648,6 @@ function damagePlayer(amount, isAcidToxin = false) {
         player.hp -= amount; 
         if (isAcidToxin) {
             player.poisonDamageEffect = 18;
-            player.damageEffect = 8;
         } else {
             player.damageEffect = 15; 
         }
@@ -543,6 +705,30 @@ function tryPvpMeleeAttack(worldMouseX, worldMouseY) {
 
 function updateEntities() {
     globalTick++;
+
+    // Płynna aktualizacja pory dnia (cykl dobowy trwa kilka minut czasu rzeczywistego)
+    let nowMs = performance.now();
+    let dtMs = Math.max(0, Math.min(200, nowMs - lastTimeUpdateMs));
+    lastTimeUpdateMs = nowMs;
+    if (isPlaying) {
+        worldTime = (worldTime + dtMs / DAY_CYCLE_DURATION_MS) % 1.0;
+        let newPhase = getDayPhaseId(worldTime);
+        if (newPhase !== currentDayPhaseName) {
+            currentDayPhaseName = newPhase;
+            if (!player.inStomach) {
+                if (newPhase === 'sunrise') {
+                    showSystemNotification("🌅 Wschodzi słońce — nastaje malowniczy świt!", "#fb923c", 210, false);
+                } else if (newPhase === 'day') {
+                    showSystemNotification("☀️ Nastał słoneczny dzień!", "#fde047", 190, false);
+                } else if (newPhase === 'sunset') {
+                    showSystemNotification("🌇 Słońce chyli się ku zachodowi...", "#f97316", 210, false);
+                } else if (newPhase === 'night') {
+                    showSystemNotification("🌙 Zapadła noc — na niebie pojawił się księżyc i gwiazdy.", "#93c5fd", 220, false);
+                }
+            }
+        }
+    }
+
     if (player.invulTimer > 0) player.invulTimer--;
     if (player.bombCooldown > 0) player.bombCooldown--;
     if (pvpHitCooldown > 0) pvpHitCooldown--;
@@ -1002,8 +1188,8 @@ function updateEntities() {
             if (player.acidPoisonTimer > 0) {
                 landSpeed *= 0.72; // Osłabienie i spowolnienie od żrących toksyn jeszcze przez chwilę po wyjściu z kwasu
             }
-            if (moveL) { player.vx = -landSpeed; player.direction = -1; player.walkFrame += 0.11; }
-            else if (moveR) { player.vx = landSpeed; player.direction = 1; player.walkFrame += 0.11; }
+            if (moveL) { player.vx = -landSpeed; player.direction = -1; player.walkFrame += 0.13; }
+            else if (moveR) { player.vx = landSpeed; player.direction = 1; player.walkFrame += 0.13; }
             else { 
                 player.vx *= 0.7;
                 if (Math.abs(player.vx) < 0.05) player.vx = 0;
@@ -1356,6 +1542,192 @@ function updateEntities() {
         }
     }
 
+    // ==========================================
+    // JELENIE W LASACH (BYK, ŁANIA I CIELĘ — BEZPIECZNE CHODZENIE I JEDZENIE TRAWY)
+    // ==========================================
+    let isDeerAuthority = (!roomCode || isRoomHost);
+
+    if (isDeerAuthority && deers.length === 0 && globalTick === 5) {
+        spawnInitialForestDeers();
+    }
+
+    // Rzadki dynamiczny resp w gęstych lasach (maksymalnie do 3 jeleni w okolicy, rzadki interwał i szansa)
+    if (isDeerAuthority && deers.length < 3 && globalTick % 900 === 0 && Math.random() < 0.32 && !player.dead && !player.inStomach) {
+        let spawnSide = Math.random() > 0.5 ? 1 : -1;
+        let candTx = Math.floor(player.x / TILE_SIZE) + spawnSide * (28 + Math.floor(Math.random() * 22));
+        if (candTx > 15 && candTx < MAP_WIDTH - 15) {
+            let treesNearby = countTreesNearTileX(candTx, 15);
+            if (isForestAt(candTx) && treesNearby >= 2) {
+                spawnDeerGroupAtTile(candTx);
+            }
+        }
+    }
+
+    for (let i = deers.length - 1; i >= 0; i--) {
+        let d = deers[i];
+        if (!d.id) d.id = generateDeerId();
+        let dims = getDeerDimensions(d.variant);
+        d.width = dims.width;
+        d.height = dims.height;
+        d.baseSpeed = dims.speed;
+        if (d.jumpCooldown > 0) d.jumpCooldown--;
+
+        // Jeśli jeleń utknął w bloku ziemi/kamienia (np. po postawieniu bloku przez gracza), wypchnij go bezpiecznie w górę
+        let unstickSteps = 0;
+        while (checkDeerCollision(d.x, d.y, d.width, d.height) && unstickSteps < 10 && d.y > TILE_SIZE * 2) {
+            d.y -= 4;
+            d.vy = 0;
+            unstickSteps++;
+        }
+
+        let centerTx = Math.floor((d.x + d.width / 2) / TILE_SIZE);
+        let footTy = Math.floor((d.y + d.height + 1) / TILE_SIZE);
+        let groundBlock = getTile(centerTx, footTy);
+
+        if (isDeerAuthority) {
+            d.stateTimer--;
+
+            if (d.stateTimer <= 0) {
+                if (d.state === 'graze') {
+                    if (groundBlock === BLOCKS.GRASS && Math.random() < 0.45) {
+                        setTile(centerTx, footTy, BLOCKS.DIRT, true);
+                        for (let p = 0; p < 6; p++) {
+                            splashParticles.push({
+                                x: d.x + (d.direction === 1 ? d.width : 0) + (Math.random() - 0.5) * 8,
+                                y: d.y + d.height - 2,
+                                vx: (Math.random() - 0.5) * 1.2,
+                                vy: -0.7 - Math.random() * 1.0,
+                                size: 2.2,
+                                color: Math.random() > 0.4 ? '#228B22' : '#8B4513',
+                                life: 20
+                            });
+                        }
+                    }
+                    d.state = 'walk';
+                    d.direction = Math.random() > 0.5 ? 1 : -1;
+                    d.stateTimer = 100 + Math.floor(Math.random() * 150);
+                } else if (d.state === 'walk') {
+                    if (d.grounded && groundBlock === BLOCKS.GRASS && Math.random() < 0.58) {
+                        d.state = 'graze';
+                        d.vx = 0;
+                        d.stateTimer = 110 + Math.floor(Math.random() * 70);
+                    } else {
+                        d.state = 'idle';
+                        d.vx = 0;
+                        d.stateTimer = 55 + Math.floor(Math.random() * 70);
+                    }
+                } else {
+                    if (d.grounded && groundBlock === BLOCKS.GRASS && Math.random() < 0.45) {
+                        d.state = 'graze';
+                        d.vx = 0;
+                        d.stateTimer = 110 + Math.floor(Math.random() * 70);
+                    } else {
+                        d.state = 'walk';
+                        d.direction = Math.random() > 0.5 ? 1 : -1;
+                        if (d.variant === 'ciele') {
+                            let nearestMom = null;
+                            let minMomDist = 9999;
+                            for (let other of deers) {
+                                if (other.variant === 'lania') {
+                                    let dist = Math.abs(other.x - d.x);
+                                    if (dist < minMomDist) {
+                                        minMomDist = dist;
+                                        nearestMom = other;
+                                    }
+                                }
+                            }
+                            if (nearestMom && minMomDist > 40 && minMomDist < 320) {
+                                d.direction = (nearestMom.x >= d.x) ? 1 : -1;
+                            }
+                        }
+                        d.stateTimer = 95 + Math.floor(Math.random() * 140);
+                    }
+                }
+            }
+        }
+
+        if (d.state === 'walk') {
+            d.vx = d.direction * d.baseSpeed;
+            d.walkFrame += 0.105;
+            d.grazeProgress = Math.max(0, (d.grazeProgress || 0) - 0.10);
+
+            let aheadTx = Math.floor((d.x + (d.direction === 1 ? d.width + 6 : -6)) / TILE_SIZE);
+            let aheadFootTile = getTile(aheadTx, footTy);
+            let aheadBodyTile = getTile(aheadTx, footTy - 1);
+            // Zawróć przed wodą, kaktusem lub głęboką przepaścią (> 3 bloki w dół)
+            let dropCheck = (getTile(aheadTx, footTy + 1) === BLOCKS.AIR &&
+                             getTile(aheadTx, footTy + 2) === BLOCKS.AIR &&
+                             getTile(aheadTx, footTy + 3) === BLOCKS.AIR);
+            if (aheadFootTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.CACTUS || dropCheck) {
+                d.direction *= -1;
+                d.vx = d.direction * d.baseSpeed;
+            }
+        } else if (d.state === 'graze') {
+            d.vx = 0;
+            d.walkFrame = 0;
+            d.grazeProgress = Math.min(1, (d.grazeProgress || 0) + 0.08);
+            if (!player.inStomach && Math.random() < 0.14) {
+                let muzzleX = d.direction === 1 ? (d.x + d.width + 3) : (d.x - 3);
+                splashParticles.push({
+                    x: muzzleX + (Math.random() - 0.5) * 4,
+                    y: d.y + d.height - 2,
+                    vx: (Math.random() - 0.5) * 0.7,
+                    vy: -0.5 - Math.random() * 0.6,
+                    size: 2,
+                    color: Math.random() > 0.35 ? '#228B22' : '#4ade80',
+                    life: 16
+                });
+            }
+        } else {
+            d.vx = 0;
+            d.walkFrame = 0;
+            d.grazeProgress = Math.max(0, (d.grazeProgress || 0) - 0.10);
+        }
+
+        d.vy += GRAVITY;
+        if (d.vy > MAX_FALL_SPEED) d.vy = MAX_FALL_SPEED;
+
+        if (d.vx !== 0) {
+            if (!checkDeerCollision(d.x + d.vx, d.y, d.width, d.height)) {
+                d.x += d.vx;
+            } else if (d.grounded && (!d.jumpCooldown || d.jumpCooldown <= 0) &&
+                       !checkDeerCollision(d.x + d.vx * 2, d.y - TILE_SIZE, d.width, d.height)) {
+                // Płynne wskoczenie na 1-blokowy stopień terenu (z cooldownem, żeby jeleń nie podskakiwał w miejscu)
+                d.vy = -3.4;
+                d.grounded = false;
+                d.jumpCooldown = 28;
+            } else {
+                d.direction *= -1;
+                d.vx = 0;
+            }
+        }
+
+        d.grounded = false;
+        if (!checkDeerCollision(d.x, d.y + d.vy, d.width, d.height)) {
+            d.y += d.vy;
+        } else {
+            if (d.vy > 0) d.grounded = true;
+            d.vy = 0;
+            d.y = Math.round(d.y);
+        }
+
+        if (d.x < TILE_SIZE * 2) { d.x = TILE_SIZE * 2; d.direction = 1; }
+        if (d.x > (MAP_WIDTH - 3) * TILE_SIZE - d.width) { d.x = (MAP_WIDTH - 3) * TILE_SIZE - d.width; d.direction = -1; }
+
+        if (isDeerAuthority) {
+            let minDistToAnyPlayer = Math.abs(d.x - player.x);
+            for (let id in remotePlayers) {
+                if (remotePlayers[id]) {
+                    let distP = Math.abs(d.x - remotePlayers[id].x);
+                    if (distP < minDistToAnyPlayer) minDistToAnyPlayer = distP;
+                }
+            }
+            if (minDistToAnyPlayer > 95 * TILE_SIZE) {
+                deers.splice(i, 1);
+            }
+        }
+    }
+
     // BOMBY (Brak zniszczeń terenu pod wodą + obrażenia PvP od bomby)
     for (let i = bombs.length - 1; i >= 0; i--) {
         let bomb = bombs[i];
@@ -1478,7 +1850,7 @@ function updateEntities() {
         if (!hitOtherPlayer && distToPlayer < maxDist) {
             let targetBlock = getTile(tileX, tileY);
             let currentItem = hotbar[selectedSlotIndex];
-            let isTargetMinable = (targetBlock !== BLOCKS.AIR && targetBlock !== BLOCKS.WATER && targetBlock !== BLOCKS.ACID && (targetBlock !== BLOCKS.STOMACH_WALL || (!player.inStomach && player.gameMode === 1)));
+            let isTargetMinable = (!isSpawnTotemBaseTile(tileX, tileY) && targetBlock !== BLOCKS.AIR && targetBlock !== BLOCKS.WATER && targetBlock !== BLOCKS.ACID && (targetBlock !== BLOCKS.STOMACH_WALL || (!player.inStomach && player.gameMode === 1)));
             let isTargetReplaceable = (targetBlock === BLOCKS.AIR || (targetBlock === BLOCKS.ACID && (!currentItem || currentItem.type !== BLOCKS.ACID)) || (targetBlock === BLOCKS.WATER && (!currentItem || currentItem.type !== BLOCKS.WATER)));
             let canSeeTarget = isBlockVisibleToPlayer(tileX, tileY);
             
