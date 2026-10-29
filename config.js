@@ -37,7 +37,7 @@ const INV_SLOTS = 20;
 const BLOCKS = { 
     AIR: 0, DIRT: 1, GRASS: 2, STONE: 3, WOOD: 4, LEAVES: 5, DIAMOND: 6, 
     SAND: 7, CACTUS: 8, WATER: 9, KELP: 10, CORAL_PINK: 11, CORAL_CYAN: 12, CORAL_GOLD: 13,
-    FLESH: 14, BONE: 15, ACID: 16, STOMACH_WALL: 17
+    FLESH: 14, BONE: 15, ACID: 16, STOMACH_WALL: 17, OPUNTIA: 18
 };
 
 const BLOCK_NAMES = {
@@ -57,7 +57,8 @@ const BLOCK_NAMES = {
     [BLOCKS.FLESH]: "Tkanka Żołądka",
     [BLOCKS.BONE]: "Kość",
     [BLOCKS.ACID]: "Kwas Żołądkowy",
-    [BLOCKS.STOMACH_WALL]: "Ściana Żołądka"
+    [BLOCKS.STOMACH_WALL]: "Ściana Żołądka",
+    [BLOCKS.OPUNTIA]: "Owoc Opuncji"
 };
 
 const COLORS = {
@@ -78,7 +79,8 @@ const COLORS = {
     [BLOCKS.FLESH]: '#9B2226',
     [BLOCKS.BONE]: '#E9D8A6',
     [BLOCKS.ACID]: 'rgba(132, 204, 22, 0.78)',
-    [BLOCKS.STOMACH_WALL]: '#3B0910'
+    [BLOCKS.STOMACH_WALL]: '#3B0910',
+    [BLOCKS.OPUNTIA]: '#E11D48'
 };
 
 // Przyspieszone, dobrze wyważone czasy kopania bloków (v1.5)
@@ -100,7 +102,8 @@ const BLOCK_HARDNESS = {
     [BLOCKS.BONE]: 40,
     [BLOCKS.STONE]: 75, 
     [BLOCKS.DIAMOND]: 125,
-    [BLOCKS.STOMACH_WALL]: 999999
+    [BLOCKS.STOMACH_WALL]: 999999,
+    [BLOCKS.OPUNTIA]: 7
 };
 
 // Stan globalny wejścia, czatu, komend i gry

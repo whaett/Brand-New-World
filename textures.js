@@ -167,5 +167,24 @@ function initTextures() {
         cx.fillRect(Math.floor(Math.random()*10)*2, Math.floor(Math.random()*10)*2, 2, 2);
     }
     TEXTURES[BLOCKS.STOMACH_WALL] = c;
+
+    // Owoc Opuncji (mały czerwono-różowy owoc kaktusa z zieloną szypułką i jasnymi kolcami)
+    c = document.createElement('canvas'); c.width = 20; c.height = 20; cx = c.getContext('2d');
+    cx.fillStyle = '#15803d';
+    cx.fillRect(7, 14, 6, 4);
+    cx.fillStyle = '#be123c';
+    cx.fillRect(4, 4, 12, 11);
+    cx.fillStyle = '#f43f5e';
+    cx.fillRect(5, 3, 10, 11);
+    cx.fillStyle = '#fb7185';
+    cx.fillRect(6, 4, 5, 6);
+    cx.fillStyle = '#fde047';
+    cx.fillRect(6, 5, 2, 2);
+    cx.fillRect(12, 6, 2, 2);
+    cx.fillRect(8, 10, 2, 2);
+    cx.fillRect(12, 11, 2, 2);
+    cx.fillStyle = '#22c55e';
+    cx.fillRect(7, 2, 6, 2);
+    TEXTURES[BLOCKS.OPUNTIA] = c;
 }
 initTextures();

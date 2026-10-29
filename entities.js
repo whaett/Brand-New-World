@@ -9,7 +9,7 @@ const player = {
     x: spawnX, y: spawnY, width: 16, height: 24,
     vx: 0, vy: 0, speed: 1.9, jumpPower: 4.95, grounded: false,
     direction: 1, walkFrame: 0, hp: 5, maxHp: 5, dead: false, damageEffect: 0,
-    fallStartY: spawnY, invulTimer: 0, ridingPig: null, bombCooldown: 0,
+    fallStartY: spawnY, invulTimer: 0, ridingPig: null, ridingCamel: null, passengerOnPlayerId: null, camelInteractCooldown: 0, bombCooldown: 0,
     inWater: false, headSubmerged: false, inKelp: false,
     isSwimming: false, swimToggle: false,
     air: 600, maxAir: 600, drownTimer: 0,
@@ -46,11 +46,13 @@ let cameraY = player.y;
 let regenTimer = 0; 
 let pigs = []; 
 let deers = [];
+let camels = [];
 let bombs = [];
 let waterBubbles = [];
 let splashParticles = [];
 
 spawnInitialForestDeers();
+spawnInitialDesertCamels();
 
 let sandworm = { 
     active: false, x: 0, y: 0, targetX: 0, targetY: 0, 
@@ -199,6 +201,369 @@ function spawnInitialForestDeers() {
     }
 }
 
+function generateCamelId() {
+    return "camel_" + myPlayerId + "_" + Math.random().toString(36).substring(2, 8);
+}
+
+// Rozdzielone gatunki:
+// 1) Wielbłąd dwugarbny ('wielblad_samiec', 'wielblad_samica', 'wielblad_mlody')
+// 2) Dromader jednogarbny ('dromader_samiec', 'dromader_samica', 'dromader_mlody')
+function getCamelSpeciesAndRole(variant) {
+    let v = variant || 'dromader_samica';
+    if (v === 'wielblad') v = 'wielblad_samiec';
+    if (v === 'dromader') v = 'dromader_samiec';
+    if (v === 'mlody') v = 'dromader_mlody';
+
+    let species = v.startsWith('wielblad') ? 'wielblad' : 'dromader';
+    let role = 'samica';
+    if (v.endsWith('_samiec')) role = 'samiec';
+    else if (v.endsWith('_mlody')) role = 'mlody';
+    return { species, role, variant: `${species}_${role}` };
+}
+
+function getCamelDimensions(variant) {
+    const info = getCamelSpeciesAndRole(variant);
+    if (info.species === 'wielblad') {
+        if (info.role === 'samiec') return { width: 34, height: 27, speed: 0.54 };
+        if (info.role === 'samica') return { width: 30, height: 24, speed: 0.58 };
+        return { width: 21, height: 18, speed: 0.66 }; // 'wielblad_mlody'
+    } else {
+        // 'dromader'
+        if (info.role === 'samiec') return { width: 32, height: 26, speed: 0.60 };
+        if (info.role === 'samica') return { width: 28, height: 23, speed: 0.64 };
+        return { width: 19, height: 17, speed: 0.70 }; // 'dromader_mlody'
+    }
+}
+
+// Wielbłądy i dromadery swobodnie mijają kaktusy i drzewa w tle (nie klinują się na kaktusach!),
+// ale kolidują z piaskiem, ziemią, kamieniem i twardym podłożem.
+function isPassableForCamel(block) {
+    return block === BLOCKS.AIR || block === BLOCKS.WATER || block === BLOCKS.KELP ||
+           block === BLOCKS.ACID || block === BLOCKS.CACTUS || block === BLOCKS.WOOD || block === BLOCKS.LEAVES;
+}
+
+function checkCamelCollision(x, y, w, h) {
+    let left = Math.floor(x / TILE_SIZE);
+    let right = Math.floor((x + w - 0.1) / TILE_SIZE);
+    let top = Math.floor(y / TILE_SIZE);
+    let bottom = Math.floor((y + h - 0.1) / TILE_SIZE);
+    for (let tx = left; tx <= right; tx++) {
+        for (let ty = top; ty <= bottom; ty++) {
+            if (!isPassableForCamel(getTile(tx, ty))) return true;
+        }
+    }
+    return false;
+}
+
+// Wyszukuje bezpieczne miejsce na pustyni (na piasku) bez kolizji z blokami i poza wodą
+function findSafeCamelSpawnPos(baseTx, variant) {
+    const dims = getCamelDimensions(variant);
+    for (let offset = 0; offset <= 10; offset++) {
+        let dirs = offset === 0 ? [0] : [-offset, offset];
+        for (let d of dirs) {
+            let tx = baseTx + d;
+            if (tx < 12 || tx >= MAP_WIDTH - 12) continue;
+            if (!isDesertAt(tx)) continue;
+            let sy = surfaceHeights[tx];
+            if (!sy || sy >= SEA_LEVEL - 1 || sy < 6) continue;
+            let groundBlk = map[tx] ? map[tx][sy] : BLOCKS.AIR;
+            if (groundBlk !== BLOCKS.SAND) continue;
+            if (Math.abs((surfaceHeights[tx + 1] || sy) - sy) > 1) continue;
+
+            let spawnX = tx * TILE_SIZE;
+            let spawnY = sy * TILE_SIZE - dims.height;
+
+            if (checkCamelCollision(spawnX, spawnY, dims.width, dims.height)) {
+                spawnY -= TILE_SIZE;
+            }
+            if (!checkCamelCollision(spawnX, spawnY, dims.width, dims.height)) {
+                return { x: spawnX, y: spawnY, tx: tx };
+            }
+        }
+    }
+    return null;
+}
+
+// Wybiera gatunek dla danego obszaru pustyni tak, aby Wielbłądy i Dromadery pojawiały się osobno
+function chooseCamelSpeciesForTile(baseTx, forcedSpecies = null) {
+    if (forcedSpecies === 'wielblad' || forcedSpecies === 'dromader') return forcedSpecies;
+    let worldX = baseTx * TILE_SIZE;
+    // Jeśli w promieniu 75 bloków jest już jakiś osobnik, zachowaj ten sam gatunek w tej okolicy
+    for (let other of camels) {
+        if (Math.abs(other.x - worldX) < 75 * TILE_SIZE) {
+            return getCamelSpeciesAndRole(other.variant).species;
+        }
+    }
+    // W przeciwnym razie przypisz gatunek deterministycznie do strefy pustyni (lewa/prawa pustynia ma swój gatunek) + lekka losowość
+    return (baseTx < MAP_WIDTH / 2) ? 'dromader' : 'wielblad';
+}
+
+// Losuje skład grupy w obrębie JEDNEGO gatunku ('wielblad' ALBO 'dromader' — nigdy mieszane!):
+// - 72% szans: pojedynczy osobnik (samica, samiec lub rzadziej młody)
+// - 22% szans: dwójka tego samego gatunku (samica + młody lub samiec + samica)
+// - 6% szans: trójka / rodzinka tego samego gatunku (samiec + samica + młody)
+function pickCamelSpawnGroup(species) {
+    let sp = (species === 'wielblad' || species === 'dromader') ? species : (Math.random() < 0.5 ? 'wielblad' : 'dromader');
+    let r = Math.random();
+    if (r < 0.72) {
+        let vRand = Math.random();
+        if (vRand < 0.45) return [`${sp}_samica`];
+        if (vRand < 0.85) return [`${sp}_samiec`];
+        return [`${sp}_mlody`];
+    } else if (r < 0.94) {
+        return Math.random() < 0.55
+            ? [`${sp}_samica`, `${sp}_mlody`]
+            : [`${sp}_samiec`, `${sp}_samica`];
+    } else {
+        return [`${sp}_samiec`, `${sp}_samica`, `${sp}_mlody`];
+    }
+}
+
+function spawnCamelGroupAtTile(baseTx, forcedSpecies = null) {
+    let sp = chooseCamelSpeciesForTile(baseTx, forcedSpecies);
+    let group = pickCamelSpawnGroup(sp);
+    let spawned = 0;
+    for (let idx = 0; idx < group.length; idx++) {
+        let variant = group[idx];
+        let safePos = findSafeCamelSpawnPos(baseTx + idx * 3, variant);
+        if (safePos) {
+            camels.push(createCamelEntity(safePos.x, safePos.y, variant));
+            spawned++;
+        }
+    }
+    return spawned;
+}
+
+function createCamelEntity(x, y, variant = 'dromader_samica') {
+    const info = getCamelSpeciesAndRole(variant);
+    const dims = getCamelDimensions(info.variant);
+    return {
+        id: generateCamelId(),
+        variant: info.variant, // np. 'wielblad_samiec', 'wielblad_samica', 'wielblad_mlody', 'dromader_samiec', 'dromader_samica', 'dromader_mlody'
+        species: info.species, // 'wielblad' | 'dromader'
+        role: info.role,       // 'samiec' | 'samica' | 'mlody'
+        x: x,
+        y: y,
+        vx: 0,
+        vy: 0,
+        width: dims.width,
+        height: dims.height,
+        baseSpeed: dims.speed,
+        direction: Math.random() > 0.5 ? 1 : -1,
+        walkFrame: Math.random() * 10,
+        grounded: false,
+        state: 'walk', // 'walk' | 'idle' | 'graze'
+        stateTimer: 100 + Math.floor(Math.random() * 150),
+        grazeProgress: 0,
+        jumpCooldown: 0,
+        isTamed: false
+    };
+}
+
+// Sprawdza, czy na wielbłądzie prowadzonym przez danego kierowcę (driverId) siedzi już drugi gracz (pasażer)
+function getPassengerIdOnCamelDriver(driverId) {
+    if (!driverId) return null;
+    if (player && !player.dead && player.passengerOnPlayerId === driverId) {
+        return myPlayerId;
+    }
+    for (let id in remotePlayers) {
+        let rp = remotePlayers[id];
+        if (rp && rp.inGame !== false && !rp.dead && rp.passengerOnPlayerId === driverId) {
+            return id;
+        }
+    }
+    return null;
+}
+
+// Zsiadanie z 2. miejsca (pasażera) na wielbłądzie dwugarbnym
+function dismountPassengerCamel() {
+    if (!player.passengerOnPlayerId) return;
+    player.passengerOnPlayerId = null;
+    if (typeof sendPlayerState === 'function') sendPlayerState();
+}
+
+// Zsiadanie z oswojonego wielbłąda dwugarbnego (jako kierowca - 1. osoba)
+function dismountCurrentCamel(broadcast = true) {
+    if (!player.ridingCamel) return;
+    let camel = player.ridingCamel;
+    player.ridingCamel = null;
+    camel.vx = 0;
+    camel.state = 'idle';
+    camel.stateTimer = 90;
+    if (!camels.includes(camel)) {
+        camels.push(camel);
+    }
+    if (broadcast && typeof sendCamelEvent === 'function') {
+        sendCamelEvent('dismount', camel);
+    }
+    if (typeof sendPlayerState === 'function') sendPlayerState();
+}
+
+// Karmienie wielbłąda owocem opuncji z ręki, wsiadanie jako 1. osoba (kierowca) oraz dosiadanie się jako 2. osoba (pasażer)
+// UWAGA: Jeździć można TYLKO na Wielbłądzie dwugarbnym ('wielblad'), bo ma 2 garby i miejsce na 2 osoby!
+function tryInteractWithCamel(worldMouseX, worldMouseY, isRightClick) {
+    if (player.dead || player.inStomach || player.isSandworm || player.camelInteractCooldown > 0) return false;
+    let playerCenterX = player.x + player.width / 2;
+    let playerCenterY = player.y + player.height / 2;
+    let maxInteractDist = 4.8 * TILE_SIZE;
+    let currentItem = hotbar[selectedSlotIndex];
+    let holdingOpuntia = Boolean(currentItem && currentItem.type === BLOCKS.OPUNTIA && currentItem.count > 0);
+
+    // A. Sprawdź, czy klikamy na wielbłąda/dromadera prowadzonego już przez innego gracza
+    if ((isRightClick || holdingOpuntia) && !player.ridingCamel && !player.passengerOnPlayerId) {
+        for (let id in remotePlayers) {
+            let rp = remotePlayers[id];
+            if (!rp || rp.inGame === false || rp.dead || !rp.isRidingCamel) continue;
+            if (Boolean(rp.inStomach) !== Boolean(player.inStomach)) continue;
+
+            let dir = rp.direction || 1;
+            let rpCamelInfo = getCamelSpeciesAndRole(rp.camelVariant || 'wielblad_samica');
+            let isTwoHumped = (rpCamelInfo.species === 'wielblad');
+            let cDims = getCamelDimensions(rpCamelInfo.variant);
+            let camelX = rp.x + 8 - cDims.width / 2 - (isTwoHumped ? dir * 5 : 0);
+            let camelY = rp.y + 17;
+
+            let dist = Math.hypot((camelX + cDims.width / 2) - playerCenterX, (camelY + cDims.height / 2) - playerCenterY);
+            if (dist > maxInteractDist) continue;
+
+            let cursorOnRiddenCamel = (worldMouseX >= camelX - 12 && worldMouseX <= camelX + cDims.width + 12 &&
+                                       worldMouseY >= rp.y - 10 && worldMouseY <= camelY + cDims.height + 10);
+            if (!cursorOnRiddenCamel) continue;
+
+            // Dromader (1 garb) ma miejsce TYLKO dla 1 osoby!
+            if (!isTwoHumped) {
+                player.camelInteractCooldown = 18;
+                showSystemNotification("🐪 To jest Dromader (jednogarbny) — ma miejsce tylko dla 1 osoby! (Wielbłąd dwugarbny mieści 2 osoby)", "#ff9800", 210, false);
+                return true;
+            }
+
+            let existingPassenger = getPassengerIdOnCamelDriver(id);
+            if (existingPassenger && existingPassenger !== myPlayerId) {
+                player.camelInteractCooldown = 18;
+                showSystemNotification("🐪 Na tym Wielbłądzie dwugarbnym siedzą już 2 osoby!", "#ff9800", 190, false);
+                return true;
+            }
+
+            if (player.ridingPig) {
+                dismountCurrentPig(false, true, false);
+            }
+            player.passengerOnPlayerId = id;
+            player.camelInteractCooldown = 18;
+            showSystemNotification(`🐪 Usiadłeś jako 2. osoba za graczem ${rp.nick || "Gracz"}! (Z 2 osobami wielbłąd idzie wolniej | [Spacja] Zejście)`, "#4caf50", 230, true);
+            if (typeof sendPlayerState === 'function') sendPlayerState();
+            return true;
+        }
+    }
+
+    // B. Interakcja z wolnymi wielbłądami dwugarbnymi i dromaderami na świecie
+    for (let i = 0; i < camels.length; i++) {
+        let c = camels[i];
+        if (!c || c === player.ridingCamel) continue;
+        let cCenterX = c.x + (c.width || 30) / 2;
+        let cCenterY = c.y + (c.height || 25) / 2;
+        let dist = Math.hypot(cCenterX - playerCenterX, cCenterY - playerCenterY);
+        if (dist > maxInteractDist) continue;
+
+        let cursorOnCamel = (worldMouseX >= c.x - 10 && worldMouseX <= c.x + (c.width || 30) + 10 &&
+                             worldMouseY >= c.y - 14 && worldMouseY <= c.y + (c.height || 25) + 8);
+        if (!cursorOnCamel) continue;
+
+        let info = getCamelSpeciesAndRole(c.variant);
+        let isTwoHumped = (info.species === 'wielblad');
+
+        // 1. Oswajanie owocem opuncji z ręki (działa zarówno na Wielbłąda dwugarbnego, jak i na Dromadera!)
+        if (holdingOpuntia && (!c.isTamed || info.role === 'mlody')) {
+            removeSelectedItem();
+            player.camelInteractCooldown = 18;
+            if (info.role === 'mlody') {
+                c.variant = `${info.species}_samica`;
+                c.role = 'samica';
+                let newDims = getCamelDimensions(c.variant);
+                c.y -= Math.max(0, newDims.height - c.height);
+                c.width = newDims.width;
+                c.height = newDims.height;
+                c.baseSpeed = newDims.speed;
+            }
+            c.isTamed = true;
+            c.state = 'idle';
+            c.vx = 0;
+            c.stateTimer = 120;
+
+            for (let p = 0; p < 12; p++) {
+                splashParticles.push({
+                    x: cCenterX + (Math.random() - 0.5) * 20,
+                    y: c.y - 2 + (Math.random() - 0.5) * 10,
+                    vx: (Math.random() - 0.5) * 1.5,
+                    vy: -0.9 - Math.random() * 1.2,
+                    size: 2.8,
+                    color: (p % 2 === 0) ? '#f43f5e' : '#fde047',
+                    life: 26
+                });
+            }
+            if (isTwoHumped) {
+                showSystemNotification("🐪 Oswoiłeś Wielbłąda dwugarbnego (2 miejsca)! Kliknij PPM, aby usiąść (drugi gracz może dosiąść się za Tobą!).", "#4caf50", 240, true);
+            } else {
+                showSystemNotification("🐪 Oswoiłeś Dromadera (1 miejsce)! Kliknij PPM (lub wskocz), aby na nim jeździć!", "#4caf50", 230, true);
+            }
+            if (typeof sendCamelEvent === 'function') {
+                sendCamelEvent('tame', c);
+            }
+            return true;
+        }
+
+        // 2. Wsiadanie na oswojonego Wielbłąda dwugarbnego (2-osobowego) lub Dromadera (1-osobowego)
+        if (c.isTamed && (isRightClick || holdingOpuntia)) {
+            if (player.ridingPig) {
+                dismountCurrentPig(false, true, false);
+            }
+            if (player.passengerOnPlayerId) {
+                dismountPassengerCamel();
+            }
+            if (player.ridingCamel && player.ridingCamel !== c) {
+                dismountCurrentCamel(true);
+            }
+            player.ridingCamel = c;
+            player.camelInteractCooldown = 18;
+            c.vx = 0;
+            if (typeof sendCamelEvent === 'function') {
+                sendCamelEvent('mount', c);
+            }
+            if (isTwoHumped) {
+                showSystemNotification("🐪 Usiadłeś na Wielbłądzie dwugarbnym (1/2 miejsca)! Druga osoba może dosiąść się za Tobą. [A/D] Ruch, [W] Skok, [Spacja] Zejście.", "#ffeb3b", 220, false);
+            } else {
+                showSystemNotification("🐪 Usiadłeś na Dromaderze (1/1 miejsce)! [A/D] Ruch, [W] Skok, [Spacja] Zejście.", "#ffeb3b", 210, false);
+            }
+            if (typeof sendPlayerState === 'function') sendPlayerState();
+            return true;
+        } else if (!c.isTamed && isRightClick) {
+            player.camelInteractCooldown = 18;
+            let speciesLabel = isTwoHumped ? "Wielbłąda dwugarbnego" : "Dromadera";
+            showSystemNotification(`🐪 Najpierw nakarm ${speciesLabel} owocem opuncji z ręki, aby go oswoić!`, "#ff9800", 210, false);
+            return true;
+        }
+    }
+    return false;
+}
+
+function spawnInitialDesertCamels() {
+    camels = [];
+    let desertCenters = [];
+    for (let tx = 45; tx < MAP_WIDTH - 45; tx += 45) {
+        if (isDesertAt(tx)) {
+            let sy = surfaceHeights[tx];
+            if (sy < SEA_LEVEL - 1 && map[tx] && map[tx][sy] === BLOCKS.SAND) {
+                desertCenters.push(tx);
+                tx += 180; // Duży odstęp — osobne siedliska na pustyni
+            }
+        }
+    }
+    // Pierwsze siedlisko pustynne otrzymuje Dromadery, a drugie Wielbłądy dwugarbne (całkowicie osobno!)
+    const speciesOrder = ['dromader', 'wielblad'];
+    for (let i = 0; i < Math.min(2, desertCenters.length); i++) {
+        spawnCamelGroupAtTile(desertCenters[i], speciesOrder[i % 2]);
+    }
+}
+
 function generatePigId() {
     return "pig_" + myPlayerId + "_" + Math.random().toString(36).substring(2, 8);
 }
@@ -223,6 +588,12 @@ function teleportPlayerToSpawn() {
     }
     if (player.ridingPig) {
         dismountCurrentPig(false, true, false);
+    }
+    if (player.ridingCamel) {
+        dismountCurrentCamel(true);
+    }
+    if (player.passengerOnPlayerId) {
+        dismountPassengerCamel();
     }
     player.isSwimming = false;
     player.swimToggle = false;
@@ -341,6 +712,12 @@ function enterWormStomach(eaterNick = "Czerw Pustynny", eaterId = null) {
     if (player.dead || player.inStomach || player.isSandworm || player.stomachExitCooldown > 0) return;
     if (player.ridingPig) {
         dismountCurrentPig(true, true, false);
+    }
+    if (player.ridingCamel) {
+        dismountCurrentCamel(true);
+    }
+    if (player.passengerOnPlayerId) {
+        dismountPassengerCamel();
     }
     player.savedWorldX = player.x;
     player.savedWorldY = player.y;
@@ -659,6 +1036,12 @@ function damagePlayer(amount, isAcidToxin = false) {
             if (player.ridingPig) {
                 dismountCurrentPig(true, true, false);
             }
+            if (player.ridingCamel) {
+                dismountCurrentCamel(true);
+            }
+            if (player.passengerOnPlayerId) {
+                dismountPassengerCamel();
+            }
             player.isSandworm = false;
             player.wormSegments = [];
             player.acidPoisonTimer = 0;
@@ -735,6 +1118,7 @@ function updateEntities() {
     if (systemMessageTimer > 0) systemMessageTimer--;
     if (player.stomachExitCooldown > 0) player.stomachExitCooldown--;
     if (player.poisonDamageEffect > 0) player.poisonDamageEffect--;
+    if (player.camelInteractCooldown > 0) player.camelInteractCooldown--;
 
     if (wormTransition.active) {
         wormTransition.timer++;
@@ -1082,6 +1466,103 @@ function updateEntities() {
                     }
                 }
             }
+        } else if (player.passengerOnPlayerId) {
+            // JAZDA JAKO 2. OSOBA (PASAŻER) NA TYLNYM SIODLE WIELBŁĄDA DWUGARBNEGO
+            let driverRp = remotePlayers[player.passengerOnPlayerId];
+            if (dismount || !driverRp || driverRp.inGame === false || driverRp.dead || !driverRp.isRidingCamel || Boolean(driverRp.inStomach) !== Boolean(player.inStomach)) {
+                if (dismount) keys['Space'] = false;
+                dismountPassengerCamel();
+                player.vy = -player.jumpPower * 0.80;
+            } else {
+                let dir = driverRp.direction || 1;
+                player.direction = dir;
+                // Pasażer siedzi na tylnym garbie za kierowcą!
+                player.x = driverRp.x - dir * 11;
+                player.y = driverRp.y;
+                player.vx = 0;
+                player.vy = 0;
+                player.grounded = true;
+                player.fallStartY = player.y;
+                player.walkFrame = 0;
+            }
+        } else if (player.ridingCamel) {
+            // JAZDA JAKO 1. OSOBA (KIEROWCA) NA OSWOJONYM WIELBŁĄDZIE DWUGARBNYM
+            // Z 2 osobami na grzbiecie wielbłąd porusza się wyraźnie wolniej!
+            let camel = player.ridingCamel;
+            let hasSecondRider = Boolean(getPassengerIdOnCamelDriver(myPlayerId));
+            if (dismount) {
+                keys['Space'] = false;
+                dismountCurrentCamel(true);
+                player.vy = -player.jumpPower * 0.82;
+            } else {
+                let mountSpeed = hasSecondRider ? (player.speed * 0.76) : (player.speed * 1.18);
+                let walkStep = hasSecondRider ? 0.11 : 0.16;
+                if (moveL) {
+                    camel.vx = -mountSpeed;
+                    camel.direction = -1;
+                    player.direction = -1;
+                    camel.walkFrame += walkStep;
+                } else if (moveR) {
+                    camel.vx = mountSpeed;
+                    camel.direction = 1;
+                    player.direction = 1;
+                    camel.walkFrame += walkStep;
+                } else {
+                    camel.vx *= 0.65;
+                    if (Math.abs(camel.vx) < 0.05) camel.vx = 0;
+                }
+
+                if (jump && camel.grounded) {
+                    camel.vy = hasSecondRider ? (-player.jumpPower * 0.86) : (-player.jumpPower * 1.02);
+                    camel.grounded = false;
+                }
+
+                camel.vy += GRAVITY;
+                if (camel.vy > MAX_FALL_SPEED) camel.vy = MAX_FALL_SPEED;
+
+                if (camel.vx !== 0) {
+                    if (!checkCamelCollision(camel.x + camel.vx, camel.y, camel.width, camel.height)) {
+                        camel.x += camel.vx;
+                    } else if (camel.grounded && !checkCamelCollision(camel.x + camel.vx, camel.y - TILE_SIZE, camel.width, camel.height)) {
+                        // Płynne wchodzenie wielbłąda na 1-blokowe wydmy i wzniesienia
+                        camel.y -= TILE_SIZE;
+                        camel.x += camel.vx;
+                    } else {
+                        camel.vx = 0;
+                    }
+                }
+
+                camel.grounded = false;
+                if (!checkCamelCollision(camel.x, camel.y + camel.vy, camel.width, camel.height)) {
+                    camel.y += camel.vy;
+                } else {
+                    if (camel.vy > 0) camel.grounded = true;
+                    camel.vy = 0;
+                    camel.y = Math.round(camel.y);
+                }
+
+                if (camel.x < 0) camel.x = 0;
+                if (camel.x > MAP_WIDTH * TILE_SIZE - camel.width) camel.x = MAP_WIDTH * TILE_SIZE - camel.width;
+
+                // Sprawdź czy wielbłąd nie wpadł do głębokiej wody
+                let cMidTx = Math.floor((camel.x + camel.width / 2) / TILE_SIZE);
+                let cMidTy = Math.floor((camel.y + camel.height / 2) / TILE_SIZE);
+                if (getTile(cMidTx, cMidTy) === BLOCKS.WATER) {
+                    dismountCurrentCamel(true);
+                    player.vy = -2.2;
+                } else {
+                    let dir = camel.direction || 1;
+                    let isTwoHumped = (getCamelSpeciesAndRole(camel.variant).species === 'wielblad');
+                    // Na Wielbłądzie dwugarbnym kierowca siedzi na przednim garbie (+dir*5, zostawiając tylny dla 2. osoby), a na Dromaderze centralnie!
+                    player.x = camel.x + camel.width / 2 - player.width / 2 + (isTwoHumped ? dir * 5 : 0);
+                    player.y = camel.y - player.height + 7;
+                    player.vx = 0;
+                    player.vy = 0;
+                    player.grounded = true;
+                    player.fallStartY = player.y;
+                    player.walkFrame = 0;
+                }
+            }
         } else if (player.inAcid) {
             // Ruch w Gęstym, Żrącym Kwasie Czerwia (mocne spowolnienie ruchów + zielone rozbryzgi)
             let acidSpeed = player.speed * 0.36;
@@ -1214,6 +1695,42 @@ function updateEntities() {
                         break;
                     }
                 }
+                if (!player.ridingPig && !player.ridingCamel && !player.passengerOnPlayerId) {
+                    // 1. Wskoczenie jako 1. osoba na wolnego, oswojonego Wielbłąda dwugarbnego lub Dromadera
+                    for (let c of camels) {
+                        if (!c.isTamed) continue;
+                        if (player.x < c.x + c.width && player.x + player.width > c.x &&
+                            player.y + player.height > c.y && player.y + player.height < c.y + c.height) {
+                            player.ridingCamel = c;
+                            c.vx = 0;
+                            if (typeof sendCamelEvent === 'function') {
+                                sendCamelEvent('mount', c);
+                            }
+                            break;
+                        }
+                    }
+                    // 2. Wskoczenie jako 2. osoba (pasażer) WYŁĄCZNIE na Wielbłąda dwugarbnego prowadzonego już przez innego gracza
+                    if (!player.ridingCamel) {
+                        for (let id in remotePlayers) {
+                            let rp = remotePlayers[id];
+                            if (!rp || rp.inGame === false || rp.dead || !rp.isRidingCamel) continue;
+                            if (Boolean(rp.inStomach) !== Boolean(player.inStomach)) continue;
+                            if (getCamelSpeciesAndRole(rp.camelVariant || 'wielblad_samica').species !== 'wielblad') continue;
+                            if (getPassengerIdOnCamelDriver(id)) continue;
+                            let dir = rp.direction || 1;
+                            let cDims = getCamelDimensions(rp.camelVariant || 'wielblad_samica');
+                            let camelX = rp.x + 8 - cDims.width / 2 - dir * 5;
+                            let camelY = rp.y + 17;
+                            if (player.x < camelX + cDims.width && player.x + player.width > camelX &&
+                                player.y + player.height > camelY - 6 && player.y + player.height < camelY + cDims.height) {
+                                player.passengerOnPlayerId = id;
+                                showSystemNotification(`🐪 Wskoczyłeś jako 2. osoba na wielbłąda gracza ${rp.nick || "Gracz"}!`, "#4caf50", 200, false);
+                                if (typeof sendPlayerState === 'function') sendPlayerState();
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             player.vy += GRAVITY; if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
 
@@ -1245,7 +1762,7 @@ function updateEntities() {
         else { damagePlayer(5); }
     }
 
-    if (!player.dead && player.gameMode !== 1 && !player.isSandworm && player.invulTimer <= 0 && !player.ridingPig) {
+    if (!player.dead && player.gameMode !== 1 && !player.isSandworm && player.invulTimer <= 0 && !player.ridingPig && !player.ridingCamel && !player.passengerOnPlayerId) {
         let left = Math.floor((player.x - 2) / TILE_SIZE);
         let right = Math.floor((player.x + player.width + 2) / TILE_SIZE);
         let top = Math.floor((player.y - 2) / TILE_SIZE);
@@ -1728,6 +2245,224 @@ function updateEntities() {
         }
     }
 
+    // ==========================================
+    // WIELBŁĄDY I DROMADERY NA PUSTYNI (CHODZENIE PO WYDMACH, SKUBANIE KAKTUSÓW I ODPOCZYNEK)
+    // ==========================================
+    let isCamelAuthority = (!roomCode || isRoomHost);
+
+    if (isCamelAuthority && camels.length === 0 && globalTick === 5) {
+        spawnInitialDesertCamels();
+    }
+
+    // Rzadki dynamiczny resp na pustyni (maksymalnie do 3 wielbłądów/dromaderów na mapie)
+    if (isCamelAuthority && camels.length < 3 && globalTick % 900 === 0 && Math.random() < 0.32 && !player.dead && !player.inStomach) {
+        let spawnSide = Math.random() > 0.5 ? 1 : -1;
+        let candTx = Math.floor(player.x / TILE_SIZE) + spawnSide * (28 + Math.floor(Math.random() * 22));
+        if (candTx > 15 && candTx < MAP_WIDTH - 15 && isDesertAt(candTx)) {
+            spawnCamelGroupAtTile(candTx);
+        }
+    }
+
+    for (let i = camels.length - 1; i >= 0; i--) {
+        let c = camels[i];
+        if (!c.id) c.id = generateCamelId();
+        let dims = getCamelDimensions(c.variant);
+        c.width = dims.width;
+        c.height = dims.height;
+        c.baseSpeed = dims.speed;
+        if (c.jumpCooldown > 0) c.jumpCooldown--;
+
+        // Jeśli gracz aktualnie jedzie na tym wielbłądzie, ruchem steruje gracz
+        if (player.ridingCamel === c) {
+            c.state = (Math.abs(c.vx) > 0.05) ? 'walk' : 'idle';
+            c.grazeProgress = 0;
+            continue;
+        }
+
+        // Bezpieczne wysunięcie w górę, jeśli wielbłąd znalazł się wewnątrz postawionego bloku
+        let unstickSteps = 0;
+        while (checkCamelCollision(c.x, c.y, c.width, c.height) && unstickSteps < 10 && c.y > TILE_SIZE * 2) {
+            c.y -= 4;
+            c.vy = 0;
+            unstickSteps++;
+        }
+
+        let centerTx = Math.floor((c.x + c.width / 2) / TILE_SIZE);
+        let footTy = Math.floor((c.y + c.height + 1) / TILE_SIZE);
+        let groundBlock = getTile(centerTx, footTy);
+
+        // Sprawdź czy tuż obok wielbłąda rośnie kaktus z małymi owocami opuncji!
+        let cactusTx = -1;
+        let cactusTy = -1;
+        for (let dx = -1; dx <= 1; dx++) {
+            let checkTx = centerTx + dx;
+            for (let ty = footTy - 1; ty >= Math.max(2, footTy - 4); ty--) {
+                if (hasOpuntiaFruit(checkTx, ty)) {
+                    cactusTx = checkTx;
+                    cactusTy = ty;
+                    break;
+                }
+            }
+            if (cactusTx !== -1) break;
+        }
+
+        if (isCamelAuthority) {
+            c.stateTimer--;
+
+            if (c.stateTimer <= 0) {
+                if (c.state === 'graze') {
+                    // Wielbłąd zjada mały owoc opuncji z kaktusa — owoc znika, a sam kaktus zostaje!
+                    if (cactusTx !== -1 && hasOpuntiaFruit(cactusTx, cactusTy)) {
+                        setOpuntiaFruit(cactusTx, cactusTy, false, true);
+                        for (let p = 0; p < 8; p++) {
+                            splashParticles.push({
+                                x: cactusTx * TILE_SIZE + 10 + (Math.random() - 0.5) * 10,
+                                y: cactusTy * TILE_SIZE + 8,
+                                vx: (Math.random() - 0.5) * 1.4,
+                                vy: -0.7 - Math.random() * 1.1,
+                                size: 2.4,
+                                color: (p % 2 === 0) ? '#f43f5e' : '#fb7185',
+                                life: 22
+                            });
+                        }
+                    }
+                    c.state = 'walk';
+                    c.direction = Math.random() > 0.5 ? 1 : -1;
+                    c.stateTimer = 110 + Math.floor(Math.random() * 160);
+                } else if (c.state === 'walk') {
+                    if (c.grounded && (cactusTx !== -1 || (groundBlock === BLOCKS.SAND && Math.random() < 0.52))) {
+                        c.state = 'graze';
+                        c.vx = 0;
+                        if (cactusTx !== -1) {
+                            c.direction = (cactusTx * TILE_SIZE >= c.x) ? 1 : -1;
+                        }
+                        c.stateTimer = 115 + Math.floor(Math.random() * 75);
+                    } else {
+                        c.state = 'idle';
+                        c.vx = 0;
+                        c.stateTimer = 65 + Math.floor(Math.random() * 80);
+                    }
+                } else {
+                    if (c.grounded && (cactusTx !== -1 || (groundBlock === BLOCKS.SAND && Math.random() < 0.40))) {
+                        c.state = 'graze';
+                        c.vx = 0;
+                        c.stateTimer = 115 + Math.floor(Math.random() * 75);
+                    } else {
+                        c.state = 'walk';
+                        c.direction = Math.random() > 0.5 ? 1 : -1;
+                        // Młode podąża wyłącznie za samicą (lub dorosłym osobnikiem) SWOJEGO własnego gatunku ('wielblad' albo 'dromader')
+                        let cInfo = getCamelSpeciesAndRole(c.variant);
+                        c.variant = cInfo.variant;
+                        c.species = cInfo.species;
+                        c.role = cInfo.role;
+                        if (cInfo.role === 'mlody') {
+                            let nearestMom = null;
+                            let minMomDist = 9999;
+                            for (let other of camels) {
+                                if (other === c) continue;
+                                let oInfo = getCamelSpeciesAndRole(other.variant);
+                                if (oInfo.species === cInfo.species && (oInfo.role === 'samica' || oInfo.role === 'samiec')) {
+                                    let dist = Math.abs(other.x - c.x);
+                                    // Preferuj samicę własnego gatunku
+                                    let weightedDist = (oInfo.role === 'samica') ? dist : dist * 1.35;
+                                    if (weightedDist < minMomDist) {
+                                        minMomDist = weightedDist;
+                                        nearestMom = other;
+                                    }
+                                }
+                            }
+                            if (nearestMom && minMomDist > 38 && minMomDist < 340) {
+                                c.direction = (nearestMom.x >= c.x) ? 1 : -1;
+                            }
+                        }
+                        c.stateTimer = 105 + Math.floor(Math.random() * 150);
+                    }
+                }
+            }
+        }
+
+        if (c.state === 'walk') {
+            c.vx = c.direction * c.baseSpeed;
+            c.walkFrame += 0.09;
+            c.grazeProgress = Math.max(0, (c.grazeProgress || 0) - 0.09);
+
+            let aheadTx = Math.floor((c.x + (c.direction === 1 ? c.width + 6 : -6)) / TILE_SIZE);
+            let aheadFootTile = getTile(aheadTx, footTy);
+            let aheadBodyTile = getTile(aheadTx, footTy - 1);
+            let dropCheck = (getTile(aheadTx, footTy + 1) === BLOCKS.AIR &&
+                             getTile(aheadTx, footTy + 2) === BLOCKS.AIR &&
+                             getTile(aheadTx, footTy + 3) === BLOCKS.AIR);
+            // Wielbłądy zawracają przed wodą lub głębokim urwiskiem
+            if (aheadFootTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.WATER || dropCheck) {
+                c.direction *= -1;
+                c.vx = c.direction * c.baseSpeed;
+            }
+        } else if (c.state === 'graze') {
+            c.vx = 0;
+            c.walkFrame = 0;
+            c.grazeProgress = Math.min(1, (c.grazeProgress || 0) + 0.08);
+            if (!player.inStomach && Math.random() < 0.14) {
+                let muzzleX = c.direction === 1 ? (c.x + c.width + 4) : (c.x - 4);
+                let isEatingCactus = (cactusTx !== -1);
+                splashParticles.push({
+                    x: muzzleX + (Math.random() - 0.5) * 4,
+                    y: c.y + c.height - (isEatingCactus ? 8 : 2),
+                    vx: (Math.random() - 0.5) * 0.7,
+                    vy: -0.5 - Math.random() * 0.6,
+                    size: 2,
+                    color: isEatingCactus ? '#2E8B57' : (Math.random() > 0.4 ? '#DEB887' : '#84cc16'),
+                    life: 16
+                });
+            }
+        } else {
+            c.vx = 0;
+            c.walkFrame = 0;
+            c.grazeProgress = Math.max(0, (c.grazeProgress || 0) - 0.09);
+        }
+
+        c.vy += GRAVITY;
+        if (c.vy > MAX_FALL_SPEED) c.vy = MAX_FALL_SPEED;
+
+        if (c.vx !== 0) {
+            if (!checkCamelCollision(c.x + c.vx, c.y, c.width, c.height)) {
+                c.x += c.vx;
+            } else if (c.grounded && (!c.jumpCooldown || c.jumpCooldown <= 0) &&
+                       !checkCamelCollision(c.x + c.vx * 2, c.y - TILE_SIZE, c.width, c.height)) {
+                c.vy = -3.4;
+                c.grounded = false;
+                c.jumpCooldown = 28;
+            } else {
+                c.direction *= -1;
+                c.vx = 0;
+            }
+        }
+
+        c.grounded = false;
+        if (!checkCamelCollision(c.x, c.y + c.vy, c.width, c.height)) {
+            c.y += c.vy;
+        } else {
+            if (c.vy > 0) c.grounded = true;
+            c.vy = 0;
+            c.y = Math.round(c.y);
+        }
+
+        if (c.x < TILE_SIZE * 2) { c.x = TILE_SIZE * 2; c.direction = 1; }
+        if (c.x > (MAP_WIDTH - 3) * TILE_SIZE - c.width) { c.x = (MAP_WIDTH - 3) * TILE_SIZE - c.width; c.direction = -1; }
+
+        if (isCamelAuthority) {
+            let minDistToAnyPlayer = Math.abs(c.x - player.x);
+            for (let id in remotePlayers) {
+                if (remotePlayers[id]) {
+                    let distP = Math.abs(c.x - remotePlayers[id].x);
+                    if (distP < minDistToAnyPlayer) minDistToAnyPlayer = distP;
+                }
+            }
+            if (!c.isTamed && minDistToAnyPlayer > 95 * TILE_SIZE) {
+                camels.splice(i, 1);
+            }
+        }
+    }
+
     // BOMBY (Brak zniszczeń terenu pod wodą + obrażenia PvP od bomby)
     for (let i = bombs.length - 1; i >= 0; i--) {
         let bomb = bombs[i];
@@ -1843,11 +2578,15 @@ function updateEntities() {
 
     if (!player.dead && canControl && !player.isSandworm) {
         let hitOtherPlayer = false;
-        if (clickMining) {
+        let interactedWithCamel = false;
+        if (clickMining || clickPlacing) {
+            interactedWithCamel = tryInteractWithCamel(worldMouseX, worldMouseY, clickPlacing);
+        }
+        if (clickMining && !interactedWithCamel) {
             hitOtherPlayer = tryPvpMeleeAttack(worldMouseX, worldMouseY);
         }
 
-        if (!hitOtherPlayer && distToPlayer < maxDist) {
+        if (!interactedWithCamel && !hitOtherPlayer && distToPlayer < maxDist) {
             let targetBlock = getTile(tileX, tileY);
             let currentItem = hotbar[selectedSlotIndex];
             let isTargetMinable = (!isSpawnTotemBaseTile(tileX, tileY) && targetBlock !== BLOCKS.AIR && targetBlock !== BLOCKS.WATER && targetBlock !== BLOCKS.ACID && (targetBlock !== BLOCKS.STOMACH_WALL || (!player.inStomach && player.gameMode === 1)));
@@ -1856,17 +2595,40 @@ function updateEntities() {
             
             if (clickMining && canSeeTarget) {
                 if (isTargetMinable) {
+                    // Jeśli kopiemy kaktusa, na którym rośnie mały owoc opuncji — najpierw szybko wydobywamy sam owoc opuncji!
+                    let targetHasOpuntia = (targetBlock === BLOCKS.CACTUS && hasOpuntiaFruit(tileX, tileY));
+                    let requiredHardness = targetHasOpuntia ? BLOCK_HARDNESS[BLOCKS.OPUNTIA] : BLOCK_HARDNESS[targetBlock];
+
                     if (miningX === tileX && miningY === tileY) {
-                        miningProgress += (player.gameMode === 1 ? Math.max(35, Math.ceil((BLOCK_HARDNESS[targetBlock] || 35) / 2)) : 1);
+                        miningProgress += (player.gameMode === 1 ? Math.max(35, Math.ceil((requiredHardness || 35) / 2)) : 1);
                         pickaxeSwing += 0.18; 
                         
-                        if (miningProgress >= BLOCK_HARDNESS[targetBlock]) {
-                            let waterAdjacent = isWaterLike(getTile(tileX, tileY - 1)) ||
-                                                isWaterLike(getTile(tileX - 1, tileY)) ||
-                                                isWaterLike(getTile(tileX + 1, tileY));
-                            setTile(tileX, tileY, waterAdjacent ? BLOCKS.WATER : BLOCKS.AIR);
-                            if (player.gameMode !== 1) {
-                                addToInventory(targetBlock, 1);
+                        if (miningProgress >= requiredHardness) {
+                            if (targetHasOpuntia) {
+                                // Wydobycie samego owocu opuncji z kaktusa (owoc znika z kaktusa i trafia do ręki/ekwipunku!)
+                                setOpuntiaFruit(tileX, tileY, false, true);
+                                if (player.gameMode !== 1) {
+                                    addToInventory(BLOCKS.OPUNTIA, 1);
+                                }
+                                for (let p = 0; p < 7; p++) {
+                                    splashParticles.push({
+                                        x: tileX * TILE_SIZE + 10 + (Math.random() - 0.5) * 10,
+                                        y: tileY * TILE_SIZE + 6,
+                                        vx: (Math.random() - 0.5) * 1.4,
+                                        vy: -0.7 - Math.random() * 1.0,
+                                        size: 2.3,
+                                        color: (p % 2 === 0) ? '#f43f5e' : '#fb7185',
+                                        life: 20
+                                    });
+                                }
+                            } else {
+                                let waterAdjacent = isWaterLike(getTile(tileX, tileY - 1)) ||
+                                                    isWaterLike(getTile(tileX - 1, tileY)) ||
+                                                    isWaterLike(getTile(tileX + 1, tileY));
+                                setTile(tileX, tileY, waterAdjacent ? BLOCKS.WATER : BLOCKS.AIR);
+                                if (player.gameMode !== 1) {
+                                    addToInventory(targetBlock, 1);
+                                }
                             }
                             miningProgress = 0;
                             miningX = -1;
@@ -1888,16 +2650,23 @@ function updateEntities() {
                 miningY = -1;
             }
             
-            if (clickPlacing && buildTimer === 0 && currentItem && canSeeTarget && isTargetReplaceable && hasNeighborBlock(tileX, tileY)) {
-                let prevBlock = targetBlock;
-                if (!checkCollision(player.x, player.y, player.width, player.height)) {
-                     setTile(tileX, tileY, currentItem.type);
-                     if (checkCollision(player.x, player.y, player.width, player.height)) {
-                         setTile(tileX, tileY, prevBlock); 
-                     } else { 
-                         removeSelectedItem();
-                         buildTimer = 7; 
-                     }
+            if (clickPlacing && buildTimer === 0 && currentItem && canSeeTarget) {
+                // Jeśli gracz trzyma Owoc Opuncji i kliknie PPM na kaktusa bez owocu -> może z powrotem osadzić owoc na kaktusie!
+                if (currentItem.type === BLOCKS.OPUNTIA && targetBlock === BLOCKS.CACTUS && !hasOpuntiaFruit(tileX, tileY)) {
+                    setOpuntiaFruit(tileX, tileY, true, true);
+                    removeSelectedItem();
+                    buildTimer = 7;
+                } else if (currentItem.type !== BLOCKS.OPUNTIA && isTargetReplaceable && hasNeighborBlock(tileX, tileY)) {
+                    let prevBlock = targetBlock;
+                    if (!checkCollision(player.x, player.y, player.width, player.height)) {
+                         setTile(tileX, tileY, currentItem.type);
+                         if (checkCollision(player.x, player.y, player.width, player.height)) {
+                             setTile(tileX, tileY, prevBlock); 
+                         } else { 
+                             removeSelectedItem();
+                             buildTimer = 7; 
+                         }
+                    }
                 }
             }
         } else {

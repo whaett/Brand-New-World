@@ -5,6 +5,7 @@ let map = [];
 let biomeMap = [];
 let surfaceHeights = [];
 let modifiedTiles = {};
+let cactusFruits = {};
 let currentWorldSeed = Math.floor(Math.random() * 900000) + 100000;
 
 const SPAWN_TILE_X = Math.floor(MAP_WIDTH / 2);
@@ -36,6 +37,7 @@ function smoothNoise(x, wavelength, seed) {
 function generateWorld(seedValue = currentWorldSeed) {
     currentWorldSeed = seedValue;
     modifiedTiles = {};
+    cactusFruits = {};
     const rng = createSeededRandom(currentWorldSeed);
 
     const SEED_1 = rng() * 1000;
@@ -295,7 +297,13 @@ function generateWorld(seedValue = currentWorldSeed) {
             if (rng() < 0.065) {
                 let cactusH = 2 + Math.floor(rng() * 3);
                 for (let i = 1; i <= cactusH; i++) {
-                    if (y - i >= 0) map[x][y - i] = BLOCKS.CACTUS;
+                    if (y - i >= 0) {
+                        map[x][y - i] = BLOCKS.CACTUS;
+                        // Na czubku kaktusa (oraz często na segmencie poniżej) wyrastają małe owoce opuncji!
+                        if (i === cactusH || (i === cactusH - 1 && rng() < 0.55)) {
+                            cactusFruits[`${x},${y - i}`] = true;
+                        }
+                    }
                 }
                 x += 3 + Math.floor(rng() * 3);
             }
@@ -458,6 +466,9 @@ function setTile(x, y, block, broadcast = true, forStomach = null) {
         if (isSpawnTotemBaseTile(x, y) && block === BLOCKS.AIR) return;
         map[x][y] = block;
         modifiedTiles[`${x},${y}`] = block;
+        if (block !== BLOCKS.CACTUS && cactusFruits[`${x},${y}`]) {
+            delete cactusFruits[`${x},${y}`];
+        }
         if (broadcast && typeof sendBlockChange === 'function') {
             sendBlockChange(x, y, block, false);
         }
@@ -508,6 +519,21 @@ function updateWaterPhysics(camX, camY) {
     }
     for (let ch of changes) {
         map[ch.x][ch.y] = ch.block;
+    }
+    // Powolne odrastanie małych owoców opuncji na czubkach kaktusów na pustyni
+    if (Math.random() < 0.03) {
+        let rx = startX + Math.floor(Math.random() * Math.max(1, endX - startX));
+        if (rx >= 2 && rx < MAP_WIDTH - 2 && isDesertAt(rx)) {
+            let sy = surfaceHeights[rx];
+            for (let ty = sy - 1; ty >= Math.max(2, sy - 5); ty--) {
+                if (map[rx][ty] === BLOCKS.CACTUS && map[rx][ty - 1] === BLOCKS.AIR) {
+                    if (!cactusFruits[`${rx},${ty}`]) {
+                        setOpuntiaFruit(rx, ty, true, true);
+                    }
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -586,4 +612,24 @@ function isSpawnTotemBaseTile(x, y) {
     if (typeof player !== 'undefined' && player.inStomach) return false;
     const spawnH = surfaceHeights[SPAWN_TILE_X];
     return (x >= SPAWN_TILE_X - 1 && x <= SPAWN_TILE_X + 1 && y === spawnH);
+}
+
+// Sprawdza czy dany segment kaktusa posiada małe owoce opuncji
+function hasOpuntiaFruit(x, y) {
+    if (typeof player !== 'undefined' && player.inStomach) return false;
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return false;
+    return map[x][y] === BLOCKS.CACTUS && Boolean(cactusFruits[`${x},${y}`]);
+}
+
+// Ustawia lub usuwa owoce opuncji na segmencie kaktusa (z synchronizacją sieciową)
+function setOpuntiaFruit(x, y, hasFruit, broadcast = true) {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return;
+    if (hasFruit && map[x][y] === BLOCKS.CACTUS) {
+        cactusFruits[`${x},${y}`] = true;
+    } else {
+        delete cactusFruits[`${x},${y}`];
+    }
+    if (broadcast && typeof sendOpuntiaChange === 'function') {
+        sendOpuntiaChange(x, y, Boolean(hasFruit));
+    }
 }

@@ -250,6 +250,10 @@ function getActivePlayersSnapshot(excludeId = null) {
             isSwimming: player.isSwimming,
             isRiding: player.ridingPig !== null,
             pigWingFlap: player.ridingPig ? player.ridingPig.wingFlap : 0,
+            isRidingCamel: player.ridingCamel !== null,
+            camelVariant: player.ridingCamel ? player.ridingCamel.variant : null,
+            camelWalkFrame: player.ridingCamel ? Number((player.ridingCamel.walkFrame || 0).toFixed(2)) : 0,
+            passengerOnPlayerId: player.passengerOnPlayerId || null,
             pickaxeAnim: null,
             grounded: player.grounded,
             gameMode: player.gameMode || 0,
@@ -280,6 +284,10 @@ function getActivePlayersSnapshot(excludeId = null) {
                 isSwimming: rp.isSwimming,
                 isRiding: Boolean(rp.isRiding),
                 pigWingFlap: rp.pigWingFlap || 0,
+                isRidingCamel: Boolean(rp.isRidingCamel),
+                camelVariant: rp.camelVariant || null,
+                camelWalkFrame: rp.camelWalkFrame || 0,
+                passengerOnPlayerId: rp.passengerOnPlayerId || null,
                 pickaxeAnim: rp.pickaxeAnim,
                 grounded: rp.grounded,
                 gameMode: rp.gameMode || 0,
@@ -295,6 +303,83 @@ function getActivePlayersSnapshot(excludeId = null) {
         }
     }
     return snapshot;
+}
+
+function getCamelsSnapshot() {
+    if (typeof camels === 'undefined') return [];
+    let list = [];
+    for (let c of camels) {
+        if (player && player.ridingCamel === c) continue;
+        list.push({
+            id: c.id,
+            variant: c.variant || 'dromader_samica',
+            x: Math.round(c.x),
+            y: Math.round(c.y),
+            vx: Number((c.vx || 0).toFixed(2)),
+            vy: Number((c.vy || 0).toFixed(2)),
+            direction: c.direction || 1,
+            walkFrame: Number((c.walkFrame || 0).toFixed(2)),
+            state: c.state || 'walk',
+            grazeProgress: Number((c.grazeProgress || 0).toFixed(2)),
+            isTamed: Boolean(c.isTamed)
+        });
+    }
+    return list;
+}
+
+function applyCamelsSnapshot(camelList) {
+    if (!Array.isArray(camelList) || typeof camels === 'undefined') return;
+    let newCamels = [];
+    let addedIds = new Set();
+    if (player && player.ridingCamel) {
+        newCamels.push(player.ridingCamel);
+        if (player.ridingCamel.id) addedIds.add(player.ridingCamel.id);
+    }
+    for (let wc of camelList) {
+        if (wc.id && addedIds.has(wc.id)) continue;
+        let existing = camels.find(c => c.id && c.id === wc.id && c !== (player && player.ridingCamel));
+        let dims = (typeof getCamelDimensions === 'function') ? getCamelDimensions(wc.variant) : { width: 30, height: 25, speed: 0.62 };
+        if (existing) {
+            if (Math.hypot(existing.x - wc.x, existing.y - wc.y) > 80) {
+                existing.x = wc.x;
+                existing.y = wc.y;
+            } else {
+                existing.x += (wc.x - existing.x) * 0.35;
+                existing.y += (wc.y - existing.y) * 0.35;
+            }
+            existing.variant = wc.variant || existing.variant;
+            existing.vx = wc.vx;
+            existing.vy = wc.vy;
+            existing.direction = wc.direction || 1;
+            existing.state = wc.state || 'walk';
+            existing.grazeProgress = wc.grazeProgress || 0;
+            existing.isTamed = Boolean(existing.isTamed || wc.isTamed);
+            newCamels.push(existing);
+            if (existing.id) addedIds.add(existing.id);
+        } else {
+            let created = {
+                id: wc.id || ("camel_" + Math.random().toString(36).substring(2, 8)),
+                variant: wc.variant || 'dromader_samica',
+                x: wc.x,
+                y: wc.y,
+                vx: wc.vx || 0,
+                vy: wc.vy || 0,
+                width: dims.width,
+                height: dims.height,
+                baseSpeed: dims.speed,
+                direction: wc.direction || 1,
+                walkFrame: wc.walkFrame || 0,
+                grounded: true,
+                state: wc.state || 'walk',
+                stateTimer: 100,
+                grazeProgress: wc.grazeProgress || 0,
+                isTamed: Boolean(wc.isTamed)
+            };
+            newCamels.push(created);
+            if (created.id) addedIds.add(created.id);
+        }
+    }
+    camels = newCamels;
 }
 
 function getDeersSnapshot() {
@@ -471,7 +556,8 @@ function sendWorldSyncResponse(targetPlayerId, sourceConn) {
         mods: modifiedTiles,
         playersSnapshot: getActivePlayersSnapshot(targetPlayerId),
         wildPigs: getWildPigsSnapshot(),
-        deers: getDeersSnapshot()
+        deers: getDeersSnapshot(),
+        camels: getCamelsSnapshot()
     };
     seenPacketIds.add(welcomePacket.pktId);
     if (sourceConn && sourceConn.open) {
@@ -548,6 +634,9 @@ function handleNetworkPacket(data, sourceConn) {
         if (data.deers) {
             applyDeersSnapshot(data.deers);
         }
+        if (data.camels) {
+            applyCamelsSnapshot(data.camels);
+        }
         if (isFirstSync && !isPlaying) {
             respawnPlayerAtSpawn();
         }
@@ -588,6 +677,9 @@ function handleNetworkPacket(data, sourceConn) {
         if (data.deers) {
             applyDeersSnapshot(data.deers);
         }
+        if (data.camels) {
+            applyCamelsSnapshot(data.camels);
+        }
     }
     else if (data.type === 'time_sync') {
         if (typeof data.worldTime === 'number') {
@@ -606,6 +698,59 @@ function handleNetworkPacket(data, sourceConn) {
     }
     else if (data.type === 'block_change') {
         setTile(data.x, data.y, data.block, false, Boolean(data.inStomach));
+        relayFromHost(data, sourceConn);
+    }
+    else if (data.type === 'opuntia_change') {
+        if (typeof setOpuntiaFruit === 'function') {
+            setOpuntiaFruit(data.x, data.y, Boolean(data.hasFruit), false);
+        }
+        relayFromHost(data, sourceConn);
+    }
+    else if (data.type === 'camel_event') {
+        if (typeof camels !== 'undefined') {
+            if (data.subtype === 'tame') {
+                let target = camels.find(c => c.id === data.camelId);
+                if (target) {
+                    target.isTamed = true;
+                    if (data.variant) target.variant = data.variant;
+                }
+            } else if (data.subtype === 'mount') {
+                for (let i = camels.length - 1; i >= 0; i--) {
+                    if (camels[i] === (player && player.ridingCamel)) continue;
+                    if (camels[i].id === data.camelId) {
+                        camels.splice(i, 1);
+                        break;
+                    }
+                }
+            } else if (data.subtype === 'dismount') {
+                let existing = camels.find(c => c.id === data.camelId);
+                let dims = (typeof getCamelDimensions === 'function') ? getCamelDimensions(data.variant) : { width: 30, height: 25, speed: 0.62 };
+                if (existing) {
+                    existing.x = data.x;
+                    existing.y = data.y;
+                    existing.isTamed = true;
+                } else {
+                    camels.push({
+                        id: data.camelId || ("camel_" + Math.random().toString(36).substring(2, 8)),
+                        variant: data.variant || 'dromader_samica',
+                        x: data.x,
+                        y: data.y,
+                        vx: 0,
+                        vy: 0,
+                        width: dims.width,
+                        height: dims.height,
+                        baseSpeed: dims.speed,
+                        direction: data.direction || 1,
+                        walkFrame: 0,
+                        grounded: true,
+                        state: 'idle',
+                        stateTimer: 100,
+                        grazeProgress: 0,
+                        isTamed: true
+                    });
+                }
+            }
+        }
         relayFromHost(data, sourceConn);
     } 
     else if (data.type === 'bomb_spawn') {
@@ -786,6 +931,10 @@ function handleNetworkPacket(data, sourceConn) {
             isSwimming: Boolean(data.isSwimming),
             isRiding: Boolean(data.isRiding),
             pigWingFlap: data.pigWingFlap || 0,
+            isRidingCamel: Boolean(data.isRidingCamel),
+            camelVariant: data.camelVariant || null,
+            camelWalkFrame: data.camelWalkFrame || 0,
+            passengerOnPlayerId: data.passengerOnPlayerId || null,
             pickaxeAnim: data.pickaxeAnim,
             grounded: data.grounded,
             gameMode: data.gameMode || 0,
@@ -806,6 +955,31 @@ function handleNetworkPacket(data, sourceConn) {
         }
         relayFromHost(data, sourceConn);
     }
+}
+
+function sendOpuntiaChange(x, y, hasFruit) {
+    if (!roomCode) return;
+    broadcastPacket({
+        type: 'opuntia_change',
+        senderId: myPlayerId,
+        x: x,
+        y: y,
+        hasFruit: Boolean(hasFruit)
+    });
+}
+
+function sendCamelEvent(subtype, camelObj) {
+    if (!roomCode || !camelObj) return;
+    broadcastPacket({
+        type: 'camel_event',
+        senderId: myPlayerId,
+        subtype: subtype,
+        camelId: camelObj.id,
+        variant: camelObj.variant,
+        x: Math.round(camelObj.x),
+        y: Math.round(camelObj.y),
+        direction: camelObj.direction || 1
+    });
 }
 
 function sendBlockChange(x, y, block, inStomach = false) {
@@ -959,6 +1133,10 @@ function sendPlayerState() {
         isSwimming: player.isSwimming,
         isRiding: player.ridingPig !== null,
         pigWingFlap: player.ridingPig ? player.ridingPig.wingFlap : 0,
+        isRidingCamel: player.ridingCamel !== null,
+        camelVariant: player.ridingCamel ? player.ridingCamel.variant : null,
+        camelWalkFrame: player.ridingCamel ? Number((player.ridingCamel.walkFrame || 0).toFixed(2)) : 0,
+        passengerOnPlayerId: player.passengerOnPlayerId || null,
         pickaxeAnim: pickaxeAnim,
         grounded: player.grounded,
         gameMode: player.gameMode || 0,
@@ -1074,7 +1252,8 @@ setInterval(() => {
             mods: modifiedTiles,
             playersSnapshot: getActivePlayersSnapshot(null),
             wildPigs: getWildPigsSnapshot(),
-        deers: getDeersSnapshot()
+        deers: getDeersSnapshot(),
+        camels: getCamelsSnapshot()
         });
     }
 

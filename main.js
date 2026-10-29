@@ -688,6 +688,8 @@ document.getElementById('respawnBtn').addEventListener('click', () => {
     player.damageEffect = 0; 
     player.invulTimer = 60; 
     player.ridingPig = null;
+    player.ridingCamel = null;
+    player.passengerOnPlayerId = null;
     player.isSandworm = false;
     player.wormSegments = [];
     player.inStomach = false;
@@ -741,9 +743,15 @@ canvas.addEventListener('mousedown', e => {
         isClicking = true;
     }
     if (e.button === 2) {
-        // Sprawdź czy kliknięto Prawym Przyciskiem Myszy (PPM) w innego gracza -> otwórz okienko interakcji!
         const worldMouseX = (mouseX / SCALE) + cameraX;
         const worldMouseY = (mouseY / SCALE) + cameraY;
+        // Jeśli kliknięto PPM na wielbłąda dwugarbnego prowadzonego przez innego gracza -> wsiądź jako 2. osoba (pasażer)!
+        if (!player.dead && typeof tryInteractWithCamel === 'function' && tryInteractWithCamel(worldMouseX, worldMouseY, true)) {
+            closePlayerContextMenu();
+            isRightClicking = false;
+            return;
+        }
+        // Sprawdź czy kliknięto Prawym Przyciskiem Myszy (PPM) w innego gracza -> otwórz okienko interakcji!
         const clickedPlayer = findRemotePlayerAtWorldPos(worldMouseX, worldMouseY);
         if (clickedPlayer && !player.dead) {
             isRightClicking = false;
@@ -992,6 +1000,226 @@ function drawAirBubble(ctx, x, y, size, isFull) {
         ctx.arc(size/2, size/2, size/2 - 2, 0, Math.PI * 2);
         ctx.stroke();
     }
+    ctx.restore();
+}
+
+function drawCamelEntity(ctx, c, forceSaddle = false) {
+    ctx.save();
+    const info = (typeof getCamelSpeciesAndRole === 'function')
+        ? getCamelSpeciesAndRole(c.variant)
+        : { species: (String(c.variant).startsWith('wielblad') ? 'wielblad' : 'dromader'), role: (String(c.variant).endsWith('_samiec') ? 'samiec' : (String(c.variant).endsWith('_mlody') ? 'mlody' : 'samica')) };
+
+    const isBactrian = (info.species === 'wielblad'); // Wielbłąd dwugarbny (2 garby) vs Dromader (1 garb)
+    const isMale = (info.role === 'samiec');
+    const isFemale = (info.role === 'samica');
+    const isYoung = (info.role === 'mlody');
+
+    const w = c.width || (isBactrian ? (isMale ? 34 : (isYoung ? 21 : 30)) : (isMale ? 32 : (isYoung ? 19 : 28)));
+    const h = c.height || (isBactrian ? (isMale ? 27 : (isYoung ? 18 : 24)) : (isMale ? 26 : (isYoung ? 17 : 23)));
+
+    ctx.translate(c.x + w / 2, c.y + h / 2);
+    ctx.scale(c.direction || 1, 1);
+    ctx.translate(-w / 2, -h / 2);
+
+    const scaleF = isYoung ? 0.70 : (isMale ? 1.08 : 0.96);
+
+    // Odrębna paleta barw dla Wielbłąda dwugarbnego oraz Dromadera (z rozróżnieniem Samca, Samicy i Młodego)
+    let coatMain, coatDark, woolCol, bellyCol;
+    if (isBactrian) {
+        if (isMale) {
+            coatMain = '#8C521E'; // Ciemny, głęboki bursztynowy brąz samca wielbłąda
+            coatDark = '#5C330F';
+            woolCol  = '#3E1F05'; // Gęsta ciemna grzywa na garbach, szyi i głowie
+            bellyCol = '#B57B45';
+        } else if (isFemale) {
+            coatMain = '#AD6E34'; // Ciepły cynamonowo-brązowy odcień samicy wielbłąda
+            coatDark = '#7D4B1E';
+            woolCol  = '#633712';
+            bellyCol = '#D9A773';
+        } else {
+            coatMain = '#C98E54'; // Jasne, miękkie futerko młodego wielbłąda dwugarbnego
+            coatDark = '#996532';
+            woolCol  = '#805124';
+            bellyCol = '#F0CAA1';
+        }
+    } else {
+        // Dromader (jednogarbny) — złocisto-piaskowe barwy pustyni
+        if (isMale) {
+            coatMain = '#C2853E'; // Mocny złocisto-ochrowy samiec dromadera
+            coatDark = '#8F5D22';
+            woolCol  = '#6E4414';
+            bellyCol = '#E3B476';
+        } else if (isFemale) {
+            coatMain = '#D9A15B'; // Jaśniejsza, smukła piaskowo-kremowa samica dromadera
+            coatDark = '#A67538';
+            woolCol  = '#8C5E26';
+            bellyCol = '#F3D7B0';
+        } else {
+            coatMain = '#E8BE82'; // Jasnopiaskowe młode dromadera
+            coatDark = '#BA8E52';
+            woolCol  = '#9E733B';
+            bellyCol = '#FFF0D6';
+        }
+    }
+
+    const legSwing = (c.state === 'walk') ? Math.sin(c.walkFrame * 2.1) * 3.1 : 0;
+
+    // 1. Długie nogi z szerokimi poduszkami stóp przystosowanymi do piasku
+    const legTop = h * 0.48;
+    const legLen = h * 0.52;
+    const legW = Math.max(2.0, (isMale ? 3.0 : 2.5) * scaleF);
+
+    // Nogi dalszego planu
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(w * 0.18 - legSwing * 0.7, legTop, legW, legLen);
+    ctx.fillRect(w * 0.70 + legSwing * 0.7, legTop, legW, legLen);
+
+    // Nogi bliższego planu
+    ctx.fillStyle = coatMain;
+    ctx.fillRect(w * 0.24 + legSwing, legTop, legW, legLen);
+    ctx.fillRect(w * 0.64 - legSwing, legTop, legW, legLen);
+
+    // Szerokie stopy wielbłądzie
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(w * 0.23 + legSwing, h - 2.2, legW + 1.3, 2.2);
+    ctx.fillRect(w * 0.63 - legSwing, h - 2.2, legW + 1.3, 2.2);
+
+    // 2. Tułów i jasne podbrzusze
+    ctx.fillStyle = coatMain;
+    ctx.fillRect(w * 0.14, h * 0.28, w * 0.66, h * 0.34);
+    ctx.fillStyle = bellyCol;
+    ctx.fillRect(w * 0.20, h * 0.51, w * 0.52, h * 0.10);
+
+    // 3. GARBY (Zależnie od gatunku: Wielbłąd = 2 garby, Dromader = 1 garb, w wersji męskiej, żeńskiej i małej!)
+    if (isBactrian) {
+        // WIELBŁĄD DWUGARBNY — zawsze DWA garby (duże u samca, zgrabne u samicy, małe u młodego)
+        let humpH = isYoung ? (h * 0.14) : (isMale ? (h * 0.24) : (h * 0.19));
+        let humpTopY = h * 0.29 - humpH;
+        let humpW = w * 0.20;
+
+        // Przedni garb
+        ctx.fillStyle = coatMain;
+        ctx.fillRect(w * 0.48, humpTopY, humpW, humpH + 1);
+        ctx.fillStyle = woolCol;
+        ctx.fillRect(w * 0.49, humpTopY - (isMale ? 2.2 : 1.2), humpW - 2, isMale ? 4 : 2.5);
+
+        // Tylny garb
+        ctx.fillStyle = coatMain;
+        ctx.fillRect(w * 0.20, humpTopY + 1, humpW, humpH);
+        ctx.fillStyle = woolCol;
+        ctx.fillRect(w * 0.21, humpTopY - (isMale ? 1.5 : 0.8), humpW - 2, isMale ? 3.8 : 2.5);
+    } else {
+        // DROMADER JEDNOGARBNY — zawsze JEDEN garb pośrodku grzbietu
+        let humpH = isYoung ? (h * 0.15) : (isMale ? (h * 0.25) : (h * 0.20));
+        let humpTopY = h * 0.29 - humpH;
+        let humpW = isYoung ? (w * 0.26) : (w * 0.34);
+        let humpX = w * 0.28;
+
+        ctx.fillStyle = coatMain;
+        ctx.fillRect(humpX, humpTopY, humpW, humpH + 1);
+        ctx.fillRect(humpX + 2, humpTopY - 2, humpW - 4, 3);
+        if (!isYoung) {
+            ctx.fillStyle = woolCol;
+            ctx.fillRect(humpX + 3, humpTopY - (isMale ? 3 : 2), humpW - 6, isMale ? 3.5 : 2.2);
+        }
+    }
+
+    // Jasne łatki na boku u młodych osobników
+    if (isYoung) {
+        ctx.fillStyle = bellyCol;
+        ctx.fillRect(w * 0.30, h * 0.35, 2.5, 2.2);
+        ctx.fillRect(w * 0.48, h * 0.37, 2.5, 2.2);
+    }
+
+    // Siodło / pustynny dywanik na grzbiecie oswojonego Wielbłąda dwugarbnego (2 miejsca) oraz Dromadera (1 miejsce)
+    if (c.isTamed || forceSaddle || (typeof player !== 'undefined' && player.ridingCamel === c)) {
+        if (isBactrian) {
+            // Dwuosobowy dywanik i 2 siedziska na Wielbłądzie dwugarbnym
+            ctx.fillStyle = '#b91c1c';
+            ctx.fillRect(w * 0.16, h * 0.24, w * 0.54, h * 0.17);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(w * 0.18, h * 0.26, w * 0.50, h * 0.05);
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(w * 0.18, h * 0.37, w * 0.50, h * 0.03);
+            ctx.fillStyle = '#451a03';
+            ctx.fillRect(w * 0.49, h * 0.20, w * 0.16, h * 0.06);
+            ctx.fillRect(w * 0.21, h * 0.21, w * 0.16, h * 0.06);
+        } else {
+            // Jednoosobowy dywanik i 1 centralne siedzisko na Dromaderze
+            ctx.fillStyle = '#b91c1c';
+            ctx.fillRect(w * 0.26, h * 0.25, w * 0.36, h * 0.16);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(w * 0.28, h * 0.27, w * 0.32, h * 0.05);
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(w * 0.28, h * 0.38, w * 0.32, h * 0.03);
+            ctx.fillStyle = '#451a03';
+            ctx.fillRect(w * 0.35, h * 0.21, w * 0.18, h * 0.06);
+        }
+    }
+
+    // Ogon z kitką
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(w * 0.08, h * 0.30, w * 0.06, h * 0.21);
+    ctx.fillStyle = woolCol;
+    ctx.fillRect(w * 0.07, h * 0.47, w * 0.08, h * 0.08);
+
+    // 4. Wygięta w łuk szyja oraz głowa (pochylają się podczas skubania kaktusów/roślin!)
+    ctx.save();
+    let shoulderX = w * 0.74;
+    let shoulderY = h * 0.38;
+    ctx.translate(shoulderX, shoulderY);
+
+    let grazeRatio = c.grazeProgress || (c.state === 'graze' ? 1 : 0);
+    let chewBob = (c.state === 'graze') ? Math.sin(globalTick * 0.28) * 0.08 : 0;
+    let neckAngle = grazeRatio * 1.05 + chewBob;
+    ctx.rotate(neckAngle);
+
+    let neckW = (isMale ? 6.6 : 5.6) * scaleF;
+    ctx.fillStyle = coatMain;
+    ctx.fillRect(-1 * scaleF, -5 * scaleF, neckW, 9 * scaleF);
+    ctx.fillRect(1.5 * scaleF, -13 * scaleF, neckW * 0.92, 10 * scaleF);
+
+    // Bujna broda / grzywa pod szyją u samców (szczególnie gęsta u samca Wielbłąda dwugarbnego, mniejsza u samca Dromadera)
+    if (isMale) {
+        ctx.fillStyle = woolCol;
+        let maneW = isBactrian ? (4.8 * scaleF) : (3.0 * scaleF);
+        let maneH = isBactrian ? (11.5 * scaleF) : (8.0 * scaleF);
+        ctx.fillRect(3.6 * scaleF, -9.5 * scaleF, maneW, maneH);
+    } else if (isBactrian && isFemale) {
+        ctx.fillStyle = woolCol;
+        ctx.fillRect(3.6 * scaleF, -8.0 * scaleF, 2.8 * scaleF, 7.5 * scaleF);
+    }
+
+    // Głowa i pysk
+    ctx.fillStyle = coatMain;
+    ctx.fillRect(0.5 * scaleF, -17 * scaleF, 10.2 * scaleF, 5.6 * scaleF);
+    ctx.fillRect(8.2 * scaleF, -15.8 * scaleF, 4.4 * scaleF, 4.3 * scaleF);
+
+    // Czubek wełny na czole u samca wielbłąda dwugarbnego
+    if (isBactrian && isMale) {
+        ctx.fillStyle = woolCol;
+        ctx.fillRect(1.5 * scaleF, -19.2 * scaleF, 5.2 * scaleF, 2.5 * scaleF);
+    }
+
+    // Ucho
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(0.2 * scaleF, -19.2 * scaleF, 2.6 * scaleF, 2.8 * scaleF);
+
+    // Oko (u samic delikatna rzęsa i jasny błysk, u samców grubszy łuk brwiowy)
+    ctx.fillStyle = '#18181B';
+    ctx.fillRect(5.2 * scaleF, -15.5 * scaleF, 1.8 * scaleF, 1.6 * scaleF);
+    if (isFemale || isYoung) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(5.4 * scaleF, -15.4 * scaleF, 0.7 * scaleF, 0.7 * scaleF);
+    }
+    ctx.fillStyle = isMale ? woolCol : coatDark;
+    ctx.fillRect(4.6 * scaleF, -16.3 * scaleF, 2.8 * scaleF, 0.9 * scaleF);
+
+    // Nozdrza
+    ctx.fillStyle = '#27272A';
+    ctx.fillRect(11.0 * scaleF, -15.2 * scaleF, 1.3 * scaleF, 1.3 * scaleF);
+
+    ctx.restore();
     ctx.restore();
 }
 
@@ -1927,6 +2155,44 @@ function draw() {
                     ctx.lineWidth = 0.5; 
                     ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
+
+                // Rysowanie małych owoców opuncji na kaktusach!
+                if (block === BLOCKS.CACTUS && typeof hasOpuntiaFruit === 'function' && hasOpuntiaFruit(x, y)) {
+                    let px = x * TILE_SIZE;
+                    let py = y * TILE_SIZE;
+                    let isTopCactus = (y > 0 && getTile(x, y - 1) !== BLOCKS.CACTUS);
+
+                    // Lewy owoc opuncji na boku kaktusa
+                    ctx.fillStyle = '#be123c';
+                    ctx.fillRect(px - 2, py + 5, 5, 6);
+                    ctx.fillStyle = '#fb7185';
+                    ctx.fillRect(px - 1, py + 6, 3, 4);
+                    ctx.fillStyle = '#fde047';
+                    ctx.fillRect(px, py + 7, 1, 1);
+
+                    // Prawy owoc opuncji na boku kaktusa
+                    ctx.fillStyle = '#be123c';
+                    ctx.fillRect(px + TILE_SIZE - 3, py + 9, 5, 6);
+                    ctx.fillStyle = '#f43f5e';
+                    ctx.fillRect(px + TILE_SIZE - 2, py + 10, 3, 4);
+                    ctx.fillStyle = '#fde047';
+                    ctx.fillRect(px + TILE_SIZE - 1, py + 11, 1, 1);
+
+                    // Jeśli to czubek kaktusa — narysuj też dorodne owoce opuncji na koronie!
+                    if (isTopCactus) {
+                        ctx.fillStyle = '#be123c';
+                        ctx.fillRect(px + 3, py - 4, 5, 5);
+                        ctx.fillStyle = '#f43f5e';
+                        ctx.fillRect(px + 4, py - 3, 3, 3);
+
+                        ctx.fillStyle = '#9f1239';
+                        ctx.fillRect(px + 11, py - 5, 6, 6);
+                        ctx.fillStyle = '#fb7185';
+                        ctx.fillRect(px + 12, py - 4, 4, 4);
+                        ctx.fillStyle = '#fde047';
+                        ctx.fillRect(px + 13, py - 3, 1.2, 1.2);
+                    }
+                }
             }
         }
     }
@@ -1959,8 +2225,10 @@ function draw() {
     
     if (miningX !== -1 && miningY !== -1) {
         let block = getTile(miningX, miningY);
-        if (block !== BLOCKS.AIR && BLOCK_HARDNESS[block]) {
-            let progressRatio = miningProgress / BLOCK_HARDNESS[block];
+        let targetHasOpuntia = (block === BLOCKS.CACTUS && typeof hasOpuntiaFruit === 'function' && hasOpuntiaFruit(miningX, miningY));
+        let reqHard = targetHasOpuntia ? BLOCK_HARDNESS[BLOCKS.OPUNTIA] : BLOCK_HARDNESS[block];
+        if (block !== BLOCKS.AIR && reqHard) {
+            let progressRatio = Math.min(1, miningProgress / reqHard);
             
             ctx.fillStyle = `rgba(0, 0, 0, ${progressRatio * 0.7})`;
             ctx.fillRect(miningX * TILE_SIZE, miningY * TILE_SIZE, TILE_SIZE, TILE_SIZE);
@@ -1999,6 +2267,12 @@ function draw() {
         if (typeof deers !== 'undefined') {
             deers.forEach(d => {
                 drawDeerEntity(ctx, d);
+            });
+        }
+
+        if (typeof camels !== 'undefined') {
+            camels.forEach(c => {
+                drawCamelEntity(ctx, c);
             });
         }
 
@@ -2076,21 +2350,55 @@ function draw() {
         }
 
         if (!rp.isSandworm) {
+            let drawRx = rp.x;
+            let drawRy = rp.y;
+            let drawRDir = rp.direction || 1;
+
+            // Jeśli ten zdalny gracz siedzi jako 2. osoba (pasażer) na wielbłądzie dwugarbnym, dopasuj jego pozycję dokładnie do tylnego siodła kierowcy
+            if (rp.passengerOnPlayerId && !rp.dead) {
+                if (rp.passengerOnPlayerId === myPlayerId && player.ridingCamel) {
+                    drawRDir = player.direction || 1;
+                    drawRx = player.x - drawRDir * 11;
+                    drawRy = player.y;
+                } else if (remotePlayers[rp.passengerOnPlayerId] && remotePlayers[rp.passengerOnPlayerId].isRidingCamel) {
+                    let drv = remotePlayers[rp.passengerOnPlayerId];
+                    drawRDir = drv.direction || 1;
+                    drawRx = drv.x - drawRDir * 11;
+                    drawRy = drv.y;
+                }
+            }
+
             if (rp.isRiding && !rp.dead) {
                 let rFlap = (typeof rp.pigWingFlap === 'number' && rp.pigWingFlap !== 0) ? rp.pigWingFlap : (globalTick * 0.45);
-                drawPigEntity(ctx, rp.x - 5, rp.y + 20, 26, 18, rp.direction || 1, rFlap, true);
+                drawPigEntity(ctx, drawRx - 5, drawRy + 20, 26, 18, drawRDir, rFlap, true);
+            } else if (rp.isRidingCamel && !rp.dead) {
+                let cVar = rp.camelVariant || 'wielblad_samica';
+                let isTwoHumped = String(cVar).startsWith('wielblad');
+                let cDims = (typeof getCamelDimensions === 'function') ? getCamelDimensions(cVar) : { width: 32, height: 26 };
+                drawCamelEntity(ctx, {
+                    variant: cVar,
+                    x: drawRx + 8 - cDims.width / 2 - (isTwoHumped ? drawRDir * 5 : 0),
+                    y: drawRy + 17,
+                    width: cDims.width,
+                    height: cDims.height,
+                    direction: drawRDir,
+                    walkFrame: rp.camelWalkFrame || 0,
+                    state: 'walk',
+                    isTamed: true
+                }, true);
             }
 
             let rSkin = SKINS[rp.skinIndex] || SKINS[0];
-            let rAirborne = !rp.grounded && !rp.dead && !rp.isRiding && !rp.isSwimming;
+            let rMounted = Boolean(rp.isRiding || rp.isRidingCamel || rp.passengerOnPlayerId);
+            let rAirborne = !rp.grounded && !rp.dead && !rMounted && !rp.isSwimming;
             drawCharacter(
                 ctx,
-                rp.x + 8,
-                rp.y + 12,
-                rp.direction || 1,
+                drawRx + 8,
+                drawRy + 12,
+                drawRDir,
                 rp.walkFrame || 0,
                 rp.dead,
-                rp.isRiding,
+                rMounted,
                 rSkin,
                 rp.pickaxeAnim,
                 rp.isSwimming,
@@ -2121,7 +2429,8 @@ function draw() {
     drawOverheadPlayerName(ctx, player.x + player.width / 2, player.isSandworm ? player.y - 8 : player.y - 6, playerNick || "Gracz", Boolean(player.isAdmin), true);
 
     if (!player.isSandworm) {
-        let isAirborne = !player.grounded && !player.dead && !player.ridingPig && !player.inWater;
+        let isMounted = (player.ridingPig !== null || player.ridingCamel !== null || player.passengerOnPlayerId !== null);
+        let isAirborne = !player.grounded && !player.dead && !isMounted && !player.inWater;
         let pickaxeAnim = ((isClicking && miningX !== -1) || pvpHitCooldown > 14) && !showInventory && !isCommandOpen ? pickaxeSwing : null;
         
         drawCharacter(
@@ -2131,7 +2440,7 @@ function draw() {
             player.direction, 
             player.walkFrame, 
             player.dead, 
-            player.ridingPig !== null, 
+            isMounted, 
             SKINS[selectedSkinIndex], 
             pickaxeAnim,
             player.isSwimming,
