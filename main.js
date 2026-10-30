@@ -208,6 +208,38 @@ function updateCommandSuggestions() {
         }
     }
 
+    // 3. Podpowiedzi wariantów [0-1-2] dla komend spawnowania zwierząt (/jelen, /wielblad, /dromader, /ryba)
+    else if (lowerVal.startsWith('/jelen') || lowerVal.startsWith('/deer')) {
+        let cmdPrefix = lowerVal.startsWith('/deer') ? '/deer' : '/jelen';
+        currentSuggestions = [
+            { insertText: `${cmdPrefix} 0`, label: `${cmdPrefix} 0`, desc: '🦌 0 - Samiec (Byk z porożem)' },
+            { insertText: `${cmdPrefix} 1`, label: `${cmdPrefix} 1`, desc: '🦌 1 - Samica (Łania)' },
+            { insertText: `${cmdPrefix} 2`, label: `${cmdPrefix} 2`, desc: '🦌 2 - Dziecko (Cielę w cętki)' }
+        ];
+    } else if (lowerVal.startsWith('/wielblad') || lowerVal.startsWith('/camel')) {
+        let cmdPrefix = lowerVal.startsWith('/camel') ? '/camel' : '/wielblad';
+        currentSuggestions = [
+            { insertText: `${cmdPrefix} 0`, label: `${cmdPrefix} 0`, desc: '🐪 0 - Samiec (Wielbłąd dwugarbny)' },
+            { insertText: `${cmdPrefix} 1`, label: `${cmdPrefix} 1`, desc: '🐪 1 - Samica (Wielbłąd dwugarbny)' },
+            { insertText: `${cmdPrefix} 2`, label: `${cmdPrefix} 2`, desc: '🐪 2 - Dziecko (Mały wielbłąd)' }
+        ];
+    } else if (lowerVal.startsWith('/dromader') || lowerVal.startsWith('/dromedary')) {
+        let cmdPrefix = lowerVal.startsWith('/dromedary') ? '/dromedary' : '/dromader';
+        currentSuggestions = [
+            { insertText: `${cmdPrefix} 0`, label: `${cmdPrefix} 0`, desc: '🐪 0 - Samiec (Dromader jednogarbny)' },
+            { insertText: `${cmdPrefix} 1`, label: `${cmdPrefix} 1`, desc: '🐪 1 - Samica (Dromader jednogarbny)' },
+            { insertText: `${cmdPrefix} 2`, label: `${cmdPrefix} 2`, desc: '🐪 2 - Dziecko (Mały dromader)' }
+        ];
+    } else if (lowerVal.startsWith('/ryba') || lowerVal.startsWith('/fish')) {
+        let cmdPrefix = lowerVal.startsWith('/fish') ? '/fish' : '/ryba';
+        currentSuggestions = [
+            { insertText: `${cmdPrefix} 0`, label: `${cmdPrefix} 0`, desc: '🐠 0 - Błazenek koralowy (daje tlen i skarby za wodorosty)' },
+            { insertText: `${cmdPrefix} 1`, label: `${cmdPrefix} 1`, desc: '🐟 1 - Złota Rybka (wyskakuje ponad taflę wody)' },
+            { insertText: `${cmdPrefix} 2`, label: `${cmdPrefix} 2`, desc: '🐡 2 - Rozdymka Kolczasta (nadyma się w kolczastą kulę)' },
+            { insertText: `${cmdPrefix} 3`, label: `${cmdPrefix} 3`, desc: '🏮 3 - Świecąca Ryba Głębinowa (oświetla głębiny)' }
+        ];
+    }
+
     if (currentSuggestions.length === 0) {
         chatSuggestionsEl.style.display = 'none';
         return;
@@ -409,6 +441,16 @@ function submitChatOrCommand() {
             }
         } else if (baseCmd === '/spawn') {
             teleportPlayerToSpawn();
+        } else if (baseCmd === '/jelen' || baseCmd === '/deer') {
+            spawnAnimalCommand('jelen', restArgs);
+        } else if (baseCmd === '/wielblad' || baseCmd === '/camel') {
+            spawnAnimalCommand('wielblad', restArgs);
+        } else if (baseCmd === '/dromader' || baseCmd === '/dromedary') {
+            spawnAnimalCommand('dromader', restArgs);
+        } else if (baseCmd === '/ryba' || baseCmd === '/fish') {
+            spawnAnimalCommand('ryba', restArgs);
+        } else if (baseCmd === '/swinia' || baseCmd === '/pigspawn') {
+            spawnAnimalCommand('swinia', restArgs);
         } else if (baseCmd === '/pig') {
             // /pig jest dostępne dla każdego gracza
             spawnAndMountPigCommand();
@@ -746,7 +788,10 @@ canvas.addEventListener('mousedown', e => {
         const worldMouseX = (mouseX / SCALE) + cameraX;
         const worldMouseY = (mouseY / SCALE) + cameraY;
         // Jeśli kliknięto PPM na wielbłąda dwugarbnego prowadzonego przez innego gracza -> wsiądź jako 2. osoba (pasażer)!
-        if (!player.dead && typeof tryInteractWithCamel === 'function' && tryInteractWithCamel(worldMouseX, worldMouseY, true)) {
+        if (!player.dead && (
+            (typeof tryInteractWithCamel === 'function' && tryInteractWithCamel(worldMouseX, worldMouseY, true)) ||
+            (typeof tryInteractWithFish === 'function' && tryInteractWithFish(worldMouseX, worldMouseY, true))
+        )) {
             closePlayerContextMenu();
             isRightClicking = false;
             return;
@@ -1003,6 +1048,152 @@ function drawAirBubble(ctx, x, y, size, isFull) {
     ctx.restore();
 }
 
+function drawFishEntity(ctx, f) {
+    ctx.save();
+    const w = f.width || 14;
+    const h = f.height || 10;
+    const cx = f.x + w / 2;
+    const cy = f.y + h / 2;
+
+    // Bioluminescencyjna poświata dla Świecącej Ryby Głębinowej ('glebinowa')
+    if (f.variant === 'glebinowa') {
+        let glowR = 44 + Math.sin(globalTick * 0.12 + (f.swimPhase || 0)) * 6;
+        let grad = ctx.createRadialGradient(cx + (f.direction || 1) * 9, cy - 4, 2, cx + (f.direction || 1) * 9, cy - 4, glowR);
+        grad.addColorStop(0.0, 'rgba(34, 211, 238, 0.58)');
+        grad.addColorStop(0.45, 'rgba(16, 185, 129, 0.22)');
+        grad.addColorStop(1.0, 'rgba(6, 182, 212, 0.0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx + (f.direction || 1) * 9, cy - 4, glowR, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    ctx.translate(cx, cy);
+    // Obrót ryby podczas wyskoku ponad wodę ('leap') lub trzepotania na lądzie ('flop')
+    if (f.state === 'leap') {
+        ctx.rotate((f.direction || 1) * Math.atan2(f.vy || 0, Math.abs(f.vx || 1)) * 0.65);
+    } else if (f.state === 'flop') {
+        ctx.rotate(Math.sin(globalTick * 0.45) * 0.5);
+    }
+    ctx.scale(f.direction || 1, 1);
+
+    let tailWag = Math.sin((f.swimPhase || 0) * 1.4) * 2.2;
+
+    if (f.variant === 'rozdymka') {
+        // ROZDYMKA KOLCZASTA (zwykła lub nadęta 2.15x w kolczastą kulę!)
+        let pScale = f.puffScale || (f.isPuffed ? 2.15 : 1.0);
+        ctx.scale(pScale, pScale);
+
+        // Ogon
+        ctx.fillStyle = '#ca8a04';
+        ctx.fillRect(-w * 0.62, -2.2 + tailWag * 0.4, 3.5, 4.4);
+
+        if (f.isPuffed || pScale > 1.25) {
+            // Okrągłe nadęte ciało
+            ctx.fillStyle = '#eab308';
+            ctx.fillRect(-5.5, -5.5, 11, 11);
+            ctx.fillStyle = '#fef08a';
+            ctx.fillRect(-4.5, 0.5, 9, 4.8);
+            // Kolce dookoła nadętej Rozdymki
+            ctx.fillStyle = '#713f12';
+            for (let a = 0; a < 10; a++) {
+                let ang = (a / 10) * Math.PI * 2 + globalTick * 0.02;
+                let sx = Math.cos(ang) * 6.8;
+                let sy = Math.sin(ang) * 6.8;
+                ctx.fillRect(sx - 1, sy - 1, 2, 2);
+            }
+        } else {
+            // Spokojna, mała Rozdymka
+            ctx.fillStyle = '#eab308';
+            ctx.fillRect(-w * 0.42, -h * 0.42, w * 0.84, h * 0.84);
+            ctx.fillStyle = '#fef9c3';
+            ctx.fillRect(-w * 0.36, h * 0.05, w * 0.72, h * 0.35);
+            ctx.fillStyle = '#854d0e';
+            ctx.fillRect(-2, -3, 2, 1.5);
+            ctx.fillRect(1, -2, 2, 1.5);
+        }
+
+        // Oko
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(2.0, -2.5, 2.4, 2.4);
+        ctx.fillStyle = '#111827';
+        ctx.fillRect(2.8, -2.0, 1.4, 1.4);
+    } else if (f.variant === 'glebinowa') {
+        // ŚWIECĄCA RYBA GŁĘBINOWA / ŻABNICA (z latarenką na czole i ostrymi ząbkami)
+        // Płetwa ogonowa
+        ctx.fillStyle = '#1e1b4b';
+        ctx.fillRect(-w * 0.62, -3.5 + tailWag * 0.5, 4, 7);
+
+        // Korpus głębinowy
+        ctx.fillStyle = '#312e81';
+        ctx.fillRect(-w * 0.44, -h * 0.45, w * 0.88, h * 0.90);
+        ctx.fillStyle = '#1e1b4b';
+        ctx.fillRect(-w * 0.38, -h * 0.45, w * 0.76, h * 0.38);
+
+        // Czułek i świecąca latarenka (esca) przed pyskiem
+        ctx.fillStyle = '#6366f1';
+        ctx.fillRect(1, -h * 0.82, 5, 1.5);
+        ctx.fillRect(5, -h * 0.82, 1.5, 3);
+        ctx.fillStyle = '#22d3ee';
+        ctx.fillRect(4.5, -h * 0.62, 3.2, 3.2);
+        ctx.fillStyle = '#ecfeff';
+        ctx.fillRect(5.2, -h * 0.56, 1.6, 1.6);
+
+        // Świecące oko i ząbki
+        ctx.fillStyle = '#67e8f9';
+        ctx.fillRect(2.2, -2.5, 2.2, 2.0);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(4.5, 1.2, 1.2, 2.0);
+        ctx.fillRect(6.5, 1.2, 1.2, 2.0);
+    } else if (f.variant === 'zlota') {
+        // ZŁOTA RYBKA SKACZĄCA / TROPIKALNY SKALAR
+        // Powiewający, rozwidlony ogon
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(-w * 0.68, -4.0 + tailWag * 0.6, 4.5, 3.2);
+        ctx.fillRect(-w * 0.68, 0.8 + tailWag * 0.6, 4.5, 3.2);
+
+        // Górna i dolna wysoka płetwa
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(-2.5, -h * 0.78, 4.5, 3.2);
+        ctx.fillRect(-2.0, h * 0.45, 4.0, 2.8);
+
+        // Złocisty korpus z błękitnym połyskiem
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(-w * 0.42, -h * 0.42, w * 0.86, h * 0.84);
+        ctx.fillStyle = '#fef08a';
+        ctx.fillRect(-w * 0.30, -h * 0.25, w * 0.60, h * 0.45);
+        ctx.fillStyle = '#0284c7';
+        ctx.fillRect(-1.5, -h * 0.40, 2.2, h * 0.80);
+
+        // Oko
+        ctx.fillStyle = '#111827';
+        ctx.fillRect(3.2, -2.0, 1.8, 1.8);
+    } else {
+        // BŁAZENEK KORALOWY ('blazenek' — pomarańczowy w białe paski)
+        // Ogon
+        ctx.fillStyle = '#ea580c';
+        ctx.fillRect(-w * 0.62, -2.8 + tailWag * 0.5, 3.6, 5.6);
+
+        // Korpus pomarańczowy
+        ctx.fillStyle = '#f97316';
+        ctx.fillRect(-w * 0.42, -h * 0.44, w * 0.86, h * 0.88);
+
+        // Charakterystyczne białe paski Błazenka z ciemną obwódką
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(-2.6, -h * 0.44, 3.2, h * 0.88);
+        ctx.fillRect(1.6, -h * 0.44, 2.6, h * 0.88);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(-2.0, -h * 0.44, 2.0, h * 0.88);
+        ctx.fillRect(2.0, -h * 0.44, 1.6, h * 0.88);
+
+        // Oko
+        ctx.fillStyle = '#111827';
+        ctx.fillRect(3.8, -1.8, 1.6, 1.6);
+    }
+
+    ctx.restore();
+}
+
 function drawCamelEntity(ctx, c, forceSaddle = false) {
     ctx.save();
     const info = (typeof getCamelSpeciesAndRole === 'function')
@@ -1132,7 +1323,7 @@ function drawCamelEntity(ctx, c, forceSaddle = false) {
     }
 
     // Siodło / pustynny dywanik na grzbiecie oswojonego Wielbłąda dwugarbnego (2 miejsca) oraz Dromadera (1 miejsce)
-    if (c.isTamed || forceSaddle || (typeof player !== 'undefined' && player.ridingCamel === c)) {
+    if (!isYoung && (c.isTamed || forceSaddle || (typeof player !== 'undefined' && player.ridingCamel === c))) {
         if (isBactrian) {
             // Dwuosobowy dywanik i 2 siedziska na Wielbłądzie dwugarbnym
             ctx.fillStyle = '#b91c1c';
@@ -1937,6 +2128,465 @@ function drawAtmosphericLightingOverlay(ctx) {
 // ==========================================
 // NIEZNISZCZALNY TOTEM ABORYGEŃSKI NA SPAWNIE (W TLE, NIE PRZESZKADZA W CHODZENIU)
 // ==========================================
+// ==========================================
+// STRUKTURY TŁA NA RÓWNINACH I W LASACH (DREWNIANY DOMEK ZE STUDNIĄ I POLEM ZBOŻA ORAZ NAMIOTY Z OGNISKIEM)
+// ==========================================
+function drawWorldBackgroundStructures(ctx) {
+    if (player.inStomach || typeof worldStructures === 'undefined') return;
+
+    const viewLeft = cameraX - 220;
+    const viewRight = cameraX + (canvas.width / SCALE) + 220;
+    const isNightOrDusk = (worldTime >= 0.70 || worldTime <= 0.26);
+
+    for (let st of worldStructures) {
+        const centerX = st.x * TILE_SIZE + TILE_SIZE / 2;
+        if (centerX < viewLeft || centerX > viewRight) continue;
+        const groundY = st.y * TILE_SIZE;
+
+        ctx.save();
+        ctx.translate(centerX, groundY);
+        ctx.scale(st.flip || 1, 1);
+
+        if (st.type === 'homestead') {
+            // ==========================================
+            // 1. MAŁE POLE UPRAWNE ZŁOCISTEGO ZBOŻA (po lewej stronie siedliska: x od -132 do -50)
+            // ==========================================
+            const fieldX = -132;
+            const fieldW = 80;
+
+            // Zaorana, żyzna ziemia uprawna na powierzchni
+            ctx.fillStyle = '#3E2723';
+            ctx.fillRect(fieldX, -4, fieldW, 5);
+            for (let fx = fieldX + 3; fx < fieldX + fieldW - 3; fx += 6) {
+                ctx.fillStyle = '#27160E';
+                ctx.fillRect(fx, -4, 3, 3);
+            }
+
+            // Drewniany płotek w tle za polem zboża
+            ctx.fillStyle = '#6E472B';
+            ctx.fillRect(fieldX + 2, -13, fieldW - 4, 2.5);
+            ctx.fillRect(fieldX + 2, -7.5, fieldW - 4, 2.2);
+            for (let postX = fieldX; postX <= fieldX + fieldW; postX += 16) {
+                ctx.fillStyle = '#5C3A21';
+                ctx.fillRect(postX - 1.5, -17, 3.2, 15);
+                ctx.fillStyle = '#8B5A2B';
+                ctx.fillRect(postX - 0.8, -16.5, 1.5, 14);
+            }
+
+            // Kołyszące się na wietrze złociste łany i kłosy zboża
+            for (let i = 0; i < 24; i++) {
+                let wx = fieldX + 4 + i * 3.1;
+                let sway = Math.sin(globalTick * 0.055 + i * 0.55 + st.x) * 2.2;
+                let stalkH = 15 + (i % 3) * 2.5;
+
+                // Łodyga zboża
+                ctx.strokeStyle = (i % 2 === 0) ? '#CA8A04' : '#EAB308';
+                ctx.lineWidth = 1.3;
+                ctx.beginPath();
+                ctx.moveTo(wx, -3);
+                ctx.lineTo(wx + sway, -3 - stalkH);
+                ctx.stroke();
+
+                // Złocisty kłos na szczycie łodygi
+                ctx.fillStyle = '#FDE047';
+                ctx.fillRect(wx + sway - 1.3, -3 - stalkH - 4.5, 2.6, 5.2);
+                ctx.fillStyle = '#F59E0B';
+                ctx.fillRect(wx + sway - 0.8, -3 - stalkH - 3.5, 1.6, 3.2);
+                // Wąsy kłosa
+                ctx.fillStyle = '#FEF08A';
+                ctx.fillRect(wx + sway - 0.5, -3 - stalkH - 6.5, 1.0, 2.0);
+            }
+
+            // ==========================================
+            // 2. DREWNIANY DOMEK (w centrum siedliska: x od -38 do +54)
+            // ==========================================
+            const houseX = -38;
+            const houseW = 92;
+            const houseH = 54;
+
+            // Komin z cegieł po prawej stronie dachu + unoszący się dymek
+            const chimX = houseX + houseW - 22;
+            const chimY = -houseH - 28;
+            for (let s = 0; s < 4; s++) {
+                let smokeProgress = ((globalTick * 0.35 + s * 18) % 72) / 72;
+                let smX = chimX + 5 + Math.sin(globalTick * 0.04 + s * 1.6) * (4 + smokeProgress * 10);
+                let smY = chimY - 4 - smokeProgress * 28;
+                let smR = 3.2 + smokeProgress * 5.5;
+                let smAlpha = (1 - smokeProgress) * 0.38;
+                ctx.fillStyle = `rgba(226, 232, 240, ${smAlpha.toFixed(3)})`;
+                ctx.beginPath();
+                ctx.arc(smX, smY, smR, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.fillStyle = '#7F1D1D';
+            ctx.fillRect(chimX, chimY, 11, 26);
+            ctx.fillStyle = '#991B1B';
+            ctx.fillRect(chimX + 1, chimY + 2, 9, 22);
+            ctx.fillStyle = '#450A0A';
+            ctx.fillRect(chimX - 1.5, chimY, 14, 3);
+
+            // Kamienna podmurówka domku
+            ctx.fillStyle = '#4B5563';
+            ctx.fillRect(houseX - 2, -8, houseW + 4, 8);
+            for (let kx = houseX; kx < houseX + houseW; kx += 10) {
+                ctx.fillStyle = (kx % 20 === 0) ? '#6B7280' : '#374151';
+                ctx.fillRect(kx, -7, 8, 6);
+            }
+
+            // Ściany z drewnianych bali
+            ctx.fillStyle = '#78472A';
+            ctx.fillRect(houseX, -houseH, houseW, houseH - 8);
+            for (let ly = -houseH + 5; ly < -8; ly += 6) {
+                ctx.fillStyle = '#5C341D';
+                ctx.fillRect(houseX, ly, houseW, 1.5);
+                ctx.fillStyle = '#8C5535';
+                ctx.fillRect(houseX + 2, ly - 3.5, houseW - 4, 2.2);
+            }
+
+            // Pionowe belki narożne i konstrukcyjne
+            ctx.fillStyle = '#4A2814';
+            ctx.fillRect(houseX, -houseH, 5, houseH - 8);
+            ctx.fillRect(houseX + houseW - 5, -houseH, 5, houseH - 8);
+            ctx.fillRect(houseX + 38, -houseH, 4, houseH - 8);
+
+            // Drewniane drzwi wejściowe ze schodkiem i okuciami
+            const doorX = houseX + 12;
+            ctx.fillStyle = '#374151';
+            ctx.fillRect(doorX - 3, -3, 24, 3);
+            ctx.fillStyle = '#3E200F';
+            ctx.fillRect(doorX - 1.5, -39.5, 21, 32.5);
+            ctx.fillStyle = '#5C3218';
+            ctx.fillRect(doorX, -38, 18, 30);
+            ctx.fillStyle = '#4A2611';
+            ctx.fillRect(doorX + 5.5, -38, 1.2, 30);
+            ctx.fillRect(doorX + 11.5, -38, 1.2, 30);
+            // Złota klamka i żelazne zawiasy
+            ctx.fillStyle = '#1F2937';
+            ctx.fillRect(doorX + 1, -33, 4, 1.8);
+            ctx.fillRect(doorX + 1, -16, 4, 1.8);
+            ctx.fillStyle = '#FBBF24';
+            ctx.fillRect(doorX + 14, -24, 2.5, 2.5);
+
+            // Okno z okiennicami i skrzynką z kwiatami (w nocy świeci ciepłym blaskiem!)
+            const winX = houseX + 52;
+            const winY = -39;
+            const winW = 24;
+            const winH = 18;
+
+            if (isNightOrDusk) {
+                ctx.save();
+                let glowGrad = ctx.createRadialGradient(winX + winW / 2, winY + winH / 2, 3, winX + winW / 2, winY + winH / 2, 42);
+                glowGrad.addColorStop(0, 'rgba(253, 224, 71, 0.42)');
+                glowGrad.addColorStop(1, 'rgba(249, 115, 22, 0.0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(winX + winW / 2, winY + winH / 2, 42, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // Okiennice boczne
+            ctx.fillStyle = '#3E200F';
+            ctx.fillRect(winX - 5, winY, 4.5, winH);
+            ctx.fillRect(winX + winW + 0.5, winY, 4.5, winH);
+            // Rama i szyba okienna
+            ctx.fillStyle = '#2E1608';
+            ctx.fillRect(winX - 1, winY - 1, winW + 2, winH + 2);
+            ctx.fillStyle = isNightOrDusk ? '#FDE047' : '#7DD3FC';
+            ctx.fillRect(winX + 1, winY + 1, winW - 2, winH - 2);
+            if (!isNightOrDusk) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+                ctx.fillRect(winX + 2, winY + 2, 6, 6);
+            } else {
+                ctx.fillStyle = '#F59E0B';
+                ctx.fillRect(winX + 3, winY + 6, winW - 6, winH - 7);
+            }
+            // Szprosy okienne (krzyż)
+            ctx.fillStyle = '#3E200F';
+            ctx.fillRect(winX + winW / 2 - 1, winY, 2, winH);
+            ctx.fillRect(winX, winY + winH / 2 - 1, winW, 2);
+
+            // Skrzynka z kwiatkami pod oknem
+            ctx.fillStyle = '#4A2814';
+            ctx.fillRect(winX - 1, winY + winH + 1, winW + 2, 4.5);
+            ctx.fillStyle = '#15803D';
+            ctx.fillRect(winX + 1, winY + winH - 1.5, winW - 2, 3);
+            const flowerCols = ['#EF4444', '#FBBF24', '#F472B6', '#38BDF8'];
+            for (let fl = 0; fl < 5; fl++) {
+                ctx.fillStyle = flowerCols[fl % flowerCols.length];
+                ctx.fillRect(winX + 2 + fl * 4.6, winY + winH - 3.2, 2.6, 2.6);
+            }
+
+            // Dwuspadowy drewniany dach z gontów i poddaszem
+            ctx.fillStyle = '#3E200F';
+            ctx.beginPath();
+            ctx.moveTo(houseX - 9, -houseH + 2);
+            ctx.lineTo(houseX + houseW / 2, -houseH - 30);
+            ctx.lineTo(houseX + houseW + 9, -houseH + 2);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#5C3218';
+            ctx.beginPath();
+            ctx.moveTo(houseX - 5, -houseH);
+            ctx.lineTo(houseX + houseW / 2, -houseH - 26);
+            ctx.lineTo(houseX + houseW + 5, -houseH);
+            ctx.closePath();
+            ctx.fill();
+
+            // Małe okrągłe okienko na poddaszu
+            ctx.fillStyle = '#2E1608';
+            ctx.beginPath();
+            ctx.arc(houseX + houseW / 2, -houseH - 11, 5.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = isNightOrDusk ? '#FDE047' : '#38BDF8';
+            ctx.beginPath();
+            ctx.arc(houseX + houseW / 2, -houseH - 11, 3.8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // ==========================================
+            // 3. KAMIENNO-DREWNIANA STUDNIA OBOK DOMKU (po prawej stronie: x od +72 do +112)
+            // ==========================================
+            const wellX = 76;
+            const wellW = 30;
+
+            // Drewniane słupki podtrzymujące daszek studni
+            ctx.fillStyle = '#4A2814';
+            ctx.fillRect(wellX + 3, -44, 3.5, 30);
+            ctx.fillRect(wellX + wellW - 6.5, -44, 3.5, 30);
+
+            // Wałek z korbką, liną i drewnianym wiadrem
+            ctx.fillStyle = '#78472A';
+            ctx.fillRect(wellX + 6, -34, wellW - 12, 3.2);
+            // Korbka z boku
+            ctx.fillStyle = '#9CA3AF';
+            ctx.fillRect(wellX + wellW - 3, -34, 4, 1.6);
+            ctx.fillRect(wellX + wellW, -34, 1.6, 5);
+            // Lina i wiadro
+            ctx.fillStyle = '#D6D3D1';
+            ctx.fillRect(wellX + wellW / 2 - 0.8, -31, 1.6, 12);
+            ctx.fillStyle = '#5C341D';
+            ctx.fillRect(wellX + wellW / 2 - 4, -20, 8, 6.5);
+            ctx.fillStyle = '#9CA3AF';
+            ctx.fillRect(wellX + wellW / 2 - 4.2, -18.5, 8.4, 1.3);
+
+            // Kamienna cembrowina studni
+            ctx.fillStyle = '#4B5563';
+            ctx.fillRect(wellX, -15, wellW, 15);
+            for (let wy = -14; wy < -1; wy += 4.5) {
+                for (let wx = wellX + 1; wx < wellX + wellW - 2; wx += 7) {
+                    ctx.fillStyle = ((wx + Math.floor(wy)) % 2 === 0) ? '#6B7280' : '#374151';
+                    ctx.fillRect(wx, wy, 6, 3.5);
+                }
+            }
+            ctx.fillStyle = '#9CA3AF';
+            ctx.fillRect(wellX - 1.5, -16.5, wellW + 3, 2.5);
+
+            // Daszek nad studnią
+            ctx.fillStyle = '#3E200F';
+            ctx.beginPath();
+            ctx.moveTo(wellX - 5, -42);
+            ctx.lineTo(wellX + wellW / 2, -56);
+            ctx.lineTo(wellX + wellW + 5, -42);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = '#6E3D20';
+            ctx.beginPath();
+            ctx.moveTo(wellX - 2, -43);
+            ctx.lineTo(wellX + wellW / 2, -53.5);
+            ctx.lineTo(wellX + wellW + 2, -43);
+            ctx.closePath();
+            ctx.fill();
+
+        } else if (st.type === 'campsite') {
+            // ==========================================
+            // OBOZOWISKO W TLE: NAMIOTY Z OGNISKIEM OBOK
+            // ==========================================
+            // Dobierz kolory płótna namiotów
+            let tentMain1 = '#15803D', tentLight1 = '#22C55E', tentDark1 = '#14532D';
+            let tentMain2 = '#B45309', tentLight2 = '#D97706', tentDark2 = '#78350F';
+            if (st.tentVariant === 1) {
+                tentMain1 = '#B45309'; tentLight1 = '#F59E0B'; tentDark1 = '#78350F';
+                tentMain2 = '#1D4ED8'; tentLight2 = '#3B82F6'; tentDark2 = '#1E3A8A';
+            } else if (st.tentVariant === 2) {
+                tentMain1 = '#991B1B'; tentLight1 = '#DC2626'; tentDark1 = '#7F1D1D';
+                tentMain2 = '#15803D'; tentLight2 = '#22C55E'; tentDark2 = '#14532D';
+            }
+
+            // 1. GŁÓWNY DUŻY NAMIOT (po lewej stronie: x od -82 do -14)
+            const t1X = -48;
+            const t1HalfW = 32;
+            const t1H = 38;
+
+            // Linki odciągowe i śledzie namiotowe
+            ctx.strokeStyle = 'rgba(214, 211, 209, 0.65)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(t1X - t1HalfW + 4, -12);
+            ctx.lineTo(t1X - t1HalfW - 8, 0);
+            ctx.moveTo(t1X + t1HalfW - 4, -12);
+            ctx.lineTo(t1X + t1HalfW + 8, 0);
+            ctx.stroke();
+            ctx.fillStyle = '#78350F';
+            ctx.fillRect(t1X - t1HalfW - 9, -3, 2, 3);
+            ctx.fillRect(t1X + t1HalfW + 7, -3, 2, 3);
+
+            // Trójkątny korpus głównego namiotu
+            ctx.fillStyle = tentDark1;
+            ctx.beginPath();
+            ctx.moveTo(t1X - t1HalfW, 0);
+            ctx.lineTo(t1X, -t1H);
+            ctx.lineTo(t1X + t1HalfW, 0);
+            ctx.closePath();
+            ctx.fill();
+
+            // Jaśniejsza połać materiału
+            ctx.fillStyle = tentMain1;
+            ctx.beginPath();
+            ctx.moveTo(t1X - t1HalfW + 3, 0);
+            ctx.lineTo(t1X, -t1H + 2);
+            ctx.lineTo(t1X + 4, 0);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = tentLight1;
+            ctx.beginPath();
+            ctx.moveTo(t1X - t1HalfW + 6, 0);
+            ctx.lineTo(t1X, -t1H + 4);
+            ctx.lineTo(t1X - 8, 0);
+            ctx.closePath();
+            ctx.fill();
+
+            // Ciemne wejście do namiotu z podwiniętą płachtą i drewnianym masztem
+            ctx.fillStyle = '#111827';
+            ctx.beginPath();
+            ctx.moveTo(t1X - 9, 0);
+            ctx.lineTo(t1X + 2, -24);
+            ctx.lineTo(t1X + 13, 0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = '#5C341D';
+            ctx.fillRect(t1X + 1, -t1H - 3, 2.5, t1H + 3);
+            ctx.fillStyle = '#E7E5E4';
+            ctx.fillRect(t1X - 10, -14, 3.5, 14);
+            ctx.fillRect(t1X + 11, -14, 3.5, 14);
+
+            // 2. DRUGI MNIEJSZY NAMIOT (po prawej stronie za ogniskiem: x od +38 do +88)
+            const t2X = 62;
+            const t2HalfW = 24;
+            const t2H = 29;
+
+            ctx.fillStyle = tentDark2;
+            ctx.beginPath();
+            ctx.moveTo(t2X - t2HalfW, 0);
+            ctx.lineTo(t2X, -t2H);
+            ctx.lineTo(t2X + t2HalfW, 0);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = tentMain2;
+            ctx.beginPath();
+            ctx.moveTo(t2X - t2HalfW + 2, 0);
+            ctx.lineTo(t2X, -t2H + 2);
+            ctx.lineTo(t2X + 3, 0);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#111827';
+            ctx.beginPath();
+            ctx.moveTo(t2X - 7, 0);
+            ctx.lineTo(t2X, -18);
+            ctx.lineTo(t2X + 8, 0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = '#5C341D';
+            ctx.fillRect(t2X - 1, -t2H - 2, 2.2, t2H + 2);
+
+            // 3. DREWNIANY PIEŃ DO SIEDZENIA ORAZ OGNISKO (w centrum obozowiska: x około +6)
+            const fireX = 8;
+
+            // Pień drzewa do siedzenia obok ogniska
+            ctx.fillStyle = '#4A2814';
+            ctx.fillRect(fireX - 24, -7, 13, 7);
+            ctx.fillStyle = '#78472A';
+            ctx.fillRect(fireX - 23, -6, 11, 3);
+            ctx.fillStyle = '#D97706';
+            ctx.fillRect(fireX - 24, -6, 2, 5);
+
+            // Ciepła poświata od ogniska (szczególnie klimatyczna o zachodzie słońca i w nocy!)
+            let firePulse = Math.sin(globalTick * 0.22 + st.x) * 4;
+            let glowRadius = (isNightOrDusk ? 64 : 34) + firePulse;
+            let fireGrad = ctx.createRadialGradient(fireX, -10, 2, fireX, -10, glowRadius);
+            fireGrad.addColorStop(0.0, isNightOrDusk ? 'rgba(251, 146, 60, 0.55)' : 'rgba(251, 146, 60, 0.28)');
+            fireGrad.addColorStop(0.5, isNightOrDusk ? 'rgba(234, 88, 12, 0.24)' : 'rgba(234, 88, 12, 0.08)');
+            fireGrad.addColorStop(1.0, 'rgba(234, 88, 12, 0.0)');
+            ctx.fillStyle = fireGrad;
+            ctx.beginPath();
+            ctx.arc(fireX, -10, glowRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Skrzyżowane polana drewna w ognisku
+            ctx.fillStyle = '#3E200F';
+            ctx.fillRect(fireX - 10, -5, 20, 3.5);
+            ctx.fillStyle = '#271206';
+            ctx.fillRect(fireX - 8, -7, 16, 3);
+
+            // Kamienny krąg wokół ogniska
+            const stones = [-11, -7, -3, 1, 5, 9];
+            for (let i = 0; i < stones.length; i++) {
+                ctx.fillStyle = (i % 2 === 0) ? '#6B7280' : '#4B5563';
+                ctx.fillRect(fireX + stones[i], -3.5, 4.2, 3.5);
+            }
+
+            // Animowane, tańczące płomienie ogniska
+            let fH1 = 13 + Math.sin(globalTick * 0.28 + st.x) * 3.2;
+            let fH2 = 10 + Math.cos(globalTick * 0.34 + st.x) * 2.5;
+            let fSway = Math.sin(globalTick * 0.21) * 1.8;
+
+            // Zewnętrzny czerwono-pomarańczowy płomień
+            ctx.fillStyle = '#EA580C';
+            ctx.beginPath();
+            ctx.moveTo(fireX - 8, -3);
+            ctx.lineTo(fireX - 3 + fSway, -3 - fH1);
+            ctx.lineTo(fireX + 2 - fSway * 0.6, -3 - fH2 * 0.75);
+            ctx.lineTo(fireX + 5 + fSway, -3 - fH2);
+            ctx.lineTo(fireX + 8, -3);
+            ctx.closePath();
+            ctx.fill();
+
+            // Środkowy złocisto-pomarańczowy płomień
+            ctx.fillStyle = '#F59E0B';
+            ctx.beginPath();
+            ctx.moveTo(fireX - 5.5, -3);
+            ctx.lineTo(fireX - 1 + fSway * 0.8, -3 - fH1 * 0.78);
+            ctx.lineTo(fireX + 3.5 + fSway * 0.5, -3 - fH2 * 0.72);
+            ctx.lineTo(fireX + 5.5, -3);
+            ctx.closePath();
+            ctx.fill();
+
+            // Jasnożółte jądro ognia
+            ctx.fillStyle = '#FEF08A';
+            ctx.beginPath();
+            ctx.moveTo(fireX - 3, -3);
+            ctx.lineTo(fireX + fSway * 0.5, -3 - fH1 * 0.48);
+            ctx.lineTo(fireX + 3, -3);
+            ctx.closePath();
+            ctx.fill();
+
+            // Unoszące się iskierki nad ogniskiem
+            for (let sp = 0; sp < 3; sp++) {
+                let spP = ((globalTick * 0.7 + sp * 19 + st.x) % 40) / 40;
+                let spX = fireX + Math.sin(globalTick * 0.12 + sp * 2.1) * 6;
+                let spY = -8 - spP * 22;
+                ctx.fillStyle = (sp % 2 === 0) ? '#FDE047' : '#FB923C';
+                ctx.fillRect(spX - 0.8, spY, 1.6, 1.6);
+            }
+        }
+
+        ctx.restore();
+    }
+}
+
 function drawSpawnAboriginalTotem(ctx) {
     if (player.inStomach) return;
     const groundY = surfaceHeights[SPAWN_TILE_X] * TILE_SIZE;
@@ -2197,8 +2847,9 @@ function draw() {
         }
     }
 
-    // Rysuj niezniszczalny Totem Aborygeński w tle na Spawnie (nie koliduje z graczami ani mobami)
+    // Rysuj niezniszczalny Totem Aborygeński na Spawnie oraz struktury tła (Drewniane Domki ze studnią i polem zboża oraz Namioty z ogniskiem)
     drawSpawnAboriginalTotem(ctx);
+    drawWorldBackgroundStructures(ctx);
 
     if (player.inStomach) {
         ctx.save();
@@ -2240,6 +2891,26 @@ function draw() {
         }
     }
 
+    // Rysowanie postępu kopania bloków przez innych graczy w Multiplayerze
+    for (let id in remotePlayers) {
+        let rp = remotePlayers[id];
+        if (!rp || rp.inGame === false || rp.dead || Boolean(rp.inStomach) !== Boolean(player.inStomach)) continue;
+        if (typeof rp.miningX === 'number' && rp.miningX !== -1 && typeof rp.miningY === 'number' && rp.miningY !== -1 && rp.miningProgress > 0) {
+            let rBlock = getTile(rp.miningX, rp.miningY);
+            let rHasOpuntia = (rBlock === BLOCKS.CACTUS && typeof hasOpuntiaFruit === 'function' && hasOpuntiaFruit(rp.miningX, rp.miningY));
+            let rReqHard = rHasOpuntia ? BLOCK_HARDNESS[BLOCKS.OPUNTIA] : BLOCK_HARDNESS[rBlock];
+            if (rBlock !== BLOCKS.AIR && rReqHard) {
+                let rRatio = Math.min(1, rp.miningProgress / rReqHard);
+                ctx.fillStyle = `rgba(0, 0, 0, ${rRatio * 0.65})`;
+                ctx.fillRect(rp.miningX * TILE_SIZE, rp.miningY * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                ctx.fillStyle = '#000';
+                ctx.fillRect(rp.miningX * TILE_SIZE + 2, rp.miningY * TILE_SIZE + TILE_SIZE - 4, TILE_SIZE - 4, 3);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(rp.miningX * TILE_SIZE + 2, rp.miningY * TILE_SIZE + TILE_SIZE - 4, (TILE_SIZE - 4) * rRatio, 3);
+            }
+        }
+    }
+
     if (!player.inStomach) {
         // Jeśli gracz właśnie wydostał się z czerwia, narysuj w miejscu wyjścia wynurzającą się paszczę Czerwia!
         if (typeof wormTransition !== 'undefined' && wormTransition.active && wormTransition.type === 'spit_out') {
@@ -2273,6 +2944,12 @@ function draw() {
         if (typeof camels !== 'undefined') {
             camels.forEach(c => {
                 drawCamelEntity(ctx, c);
+            });
+        }
+
+        if (typeof fishes !== 'undefined') {
+            fishes.forEach(f => {
+                drawFishEntity(ctx, f);
             });
         }
 

@@ -237,24 +237,30 @@ function getActivePlayersSnapshot(excludeId = null) {
     let snapshot = {};
     let now = performance.now();
     if (isPlaying && playerNick && myPlayerId !== excludeId) {
+        let curPickaxeAnim = (isClicking && (miningX !== -1 || pvpHitCooldown > 15) && !showInventory && !isCommandOpen) ? Number(pickaxeSwing.toFixed(2)) : null;
         snapshot[myPlayerId] = {
             nick: playerNick,
-            x: player.x,
-            y: player.y,
+            x: Number(player.x.toFixed(2)),
+            y: Number(player.y.toFixed(2)),
+            vx: Number((player.ridingPig ? player.ridingPig.vx : (player.ridingCamel ? player.ridingCamel.vx : player.vx) || 0).toFixed(2)),
+            vy: Number((player.ridingPig ? player.ridingPig.vy : (player.ridingCamel ? player.ridingCamel.vy : player.vy) || 0).toFixed(2)),
             direction: player.direction,
-            walkFrame: player.walkFrame,
+            walkFrame: Number((player.walkFrame || 0).toFixed(2)),
             skinIndex: selectedSkinIndex,
             dead: player.dead,
             hp: player.hp,
             maxHp: player.maxHp,
             isSwimming: player.isSwimming,
             isRiding: player.ridingPig !== null,
-            pigWingFlap: player.ridingPig ? player.ridingPig.wingFlap : 0,
+            pigWingFlap: player.ridingPig ? Number((player.ridingPig.wingFlap || 0).toFixed(2)) : 0,
             isRidingCamel: player.ridingCamel !== null,
             camelVariant: player.ridingCamel ? player.ridingCamel.variant : null,
             camelWalkFrame: player.ridingCamel ? Number((player.ridingCamel.walkFrame || 0).toFixed(2)) : 0,
             passengerOnPlayerId: player.passengerOnPlayerId || null,
-            pickaxeAnim: null,
+            pickaxeAnim: curPickaxeAnim,
+            miningX: miningX,
+            miningY: miningY,
+            miningProgress: Number((miningProgress || 0).toFixed(1)),
             grounded: player.grounded,
             gameMode: player.gameMode || 0,
             isAdmin: Boolean(player.isAdmin),
@@ -273,8 +279,10 @@ function getActivePlayersSnapshot(excludeId = null) {
         if (rp && now - rp.lastSeen <= 3800) {
             snapshot[id] = {
                 nick: rp.nick,
-                x: rp.x,
-                y: rp.y,
+                x: typeof rp.targetX === 'number' ? rp.targetX : rp.x,
+                y: typeof rp.targetY === 'number' ? rp.targetY : rp.y,
+                vx: rp.vx || 0,
+                vy: rp.vy || 0,
                 direction: rp.direction,
                 walkFrame: rp.walkFrame,
                 skinIndex: rp.skinIndex,
@@ -289,6 +297,9 @@ function getActivePlayersSnapshot(excludeId = null) {
                 camelWalkFrame: rp.camelWalkFrame || 0,
                 passengerOnPlayerId: rp.passengerOnPlayerId || null,
                 pickaxeAnim: rp.pickaxeAnim,
+                miningX: typeof rp.miningX === 'number' ? rp.miningX : -1,
+                miningY: typeof rp.miningY === 'number' ? rp.miningY : -1,
+                miningProgress: rp.miningProgress || 0,
                 grounded: rp.grounded,
                 gameMode: rp.gameMode || 0,
                 isAdmin: Boolean(rp.isAdmin),
@@ -303,6 +314,70 @@ function getActivePlayersSnapshot(excludeId = null) {
         }
     }
     return snapshot;
+}
+
+function getFishesSnapshot() {
+    if (typeof fishes === 'undefined') return [];
+    return fishes.map(f => ({
+        id: f.id,
+        variant: f.variant || 'blazenek',
+        x: Math.round(f.x),
+        y: Math.round(f.y),
+        vx: Number((f.vx || 0).toFixed(2)),
+        vy: Number((f.vy || 0).toFixed(2)),
+        direction: f.direction || 1,
+        swimPhase: Number((f.swimPhase || 0).toFixed(2)),
+        state: f.state || 'swim',
+        isPuffed: Boolean(f.isPuffed),
+        puffScale: Number((f.puffScale || 1.0).toFixed(2))
+    }));
+}
+
+function applyFishesSnapshot(fishList) {
+    if (!Array.isArray(fishList) || typeof fishes === 'undefined') return;
+    let newFishes = [];
+    for (let wf of fishList) {
+        let existing = fishes.find(f => f.id && f.id === wf.id);
+        let dims = (typeof getFishDimensions === 'function') ? getFishDimensions(wf.variant) : { width: 13, height: 9, speed: 0.72 };
+        if (existing) {
+            if (Math.hypot(existing.x - wf.x, existing.y - wf.y) > 80) {
+                existing.x = wf.x;
+                existing.y = wf.y;
+            } else {
+                existing.x += (wf.x - existing.x) * 0.35;
+                existing.y += (wf.y - existing.y) * 0.35;
+            }
+            existing.variant = wf.variant || existing.variant;
+            existing.vx = wf.vx;
+            existing.vy = wf.vy;
+            existing.direction = wf.direction || 1;
+            existing.state = wf.state || 'swim';
+            existing.isPuffed = Boolean(wf.isPuffed);
+            existing.puffScale = wf.puffScale || (existing.isPuffed ? 2.15 : 1.0);
+            newFishes.push(existing);
+        } else {
+            newFishes.push({
+                id: wf.id || ("fish_" + Math.random().toString(36).substring(2, 8)),
+                variant: wf.variant || 'blazenek',
+                x: wf.x,
+                y: wf.y,
+                vx: wf.vx || 0,
+                vy: wf.vy || 0,
+                width: dims.width,
+                height: dims.height,
+                baseSpeed: dims.speed,
+                direction: wf.direction || 1,
+                swimPhase: wf.swimPhase || 0,
+                state: wf.state || 'swim',
+                stateTimer: 90,
+                isPuffed: Boolean(wf.isPuffed),
+                puffTimer: wf.isPuffed ? 80 : 0,
+                puffScale: wf.puffScale || (wf.isPuffed ? 2.15 : 1.0),
+                fedCooldown: 0
+            });
+        }
+    }
+    fishes = newFishes;
 }
 
 function getCamelsSnapshot() {
@@ -534,10 +609,29 @@ function applyPlayersSnapshot(snapshot) {
             addChatMessage(null, `➕ Gracz ${pInfo.nick} dołączył do gry!`, 'system');
         }
         if (!prev || prev.skinIndex !== pInfo.skinIndex) changedSkin = true;
+
+        // Jeśli mamy świeży bezpośredni pakiet player_state (młodszy niż 450 ms), nie cofamy pozycji gracza starym snapshotem z roster_sync!
+        if (prev && prev.lastDirectStateTime && (now - prev.lastDirectStateTime < 450)) {
+            prev.nick = pInfo.nick || prev.nick;
+            prev.skinIndex = typeof pInfo.skinIndex === 'number' ? pInfo.skinIndex : prev.skinIndex;
+            prev.isAdmin = Boolean(pInfo.isAdmin);
+            prev.gameMode = pInfo.gameMode || 0;
+            prev.isHost = Boolean(pInfo.isHost);
+            prev.lastSeen = now;
+            continue;
+        }
+
         remotePlayers[pid] = {
             ...pInfo,
+            x: prev ? prev.x : pInfo.x,
+            y: prev ? prev.y : pInfo.y,
+            targetX: pInfo.x,
+            targetY: pInfo.y,
+            vx: pInfo.vx || 0,
+            vy: pInfo.vy || 0,
             damageEffect: prev && prev.damageEffect > 0 ? prev.damageEffect : 0,
-            lastSeen: now
+            lastSeen: now,
+            lastDirectStateTime: prev ? prev.lastDirectStateTime : 0
         };
     }
     if (changedSkin && typeof updateSkinAvailabilityUI === 'function') {
@@ -554,10 +648,12 @@ function sendWorldSyncResponse(targetPlayerId, sourceConn) {
         seed: currentWorldSeed,
         worldTime: typeof worldTime === 'number' ? Number(worldTime.toFixed(4)) : 0.34,
         mods: modifiedTiles,
+        fruits: typeof cactusFruits !== 'undefined' ? cactusFruits : {},
         playersSnapshot: getActivePlayersSnapshot(targetPlayerId),
         wildPigs: getWildPigsSnapshot(),
         deers: getDeersSnapshot(),
-        camels: getCamelsSnapshot()
+        camels: getCamelsSnapshot(),
+        fishes: getFishesSnapshot()
     };
     seenPacketIds.add(welcomePacket.pktId);
     if (sourceConn && sourceConn.open) {
@@ -614,6 +710,9 @@ function handleNetworkPacket(data, sourceConn) {
             currentDayPhaseName = getDayPhaseId(worldTime);
             lastTimeUpdateMs = performance.now();
         }
+        if (data.fruits && typeof cactusFruits !== 'undefined') {
+            cactusFruits = { ...data.fruits };
+        }
         if (data.mods) {
             for (let key in data.mods) {
                 let parts = key.split(',');
@@ -636,6 +735,9 @@ function handleNetworkPacket(data, sourceConn) {
         }
         if (data.camels) {
             applyCamelsSnapshot(data.camels);
+        }
+        if (data.fishes) {
+            applyFishesSnapshot(data.fishes);
         }
         if (isFirstSync && !isPlaying) {
             respawnPlayerAtSpawn();
@@ -680,6 +782,9 @@ function handleNetworkPacket(data, sourceConn) {
         if (data.camels) {
             applyCamelsSnapshot(data.camels);
         }
+        if (data.fishes) {
+            applyFishesSnapshot(data.fishes);
+        }
     }
     else if (data.type === 'time_sync') {
         if (typeof data.worldTime === 'number') {
@@ -698,6 +803,49 @@ function handleNetworkPacket(data, sourceConn) {
     }
     else if (data.type === 'block_change') {
         setTile(data.x, data.y, data.block, false, Boolean(data.inStomach));
+        relayFromHost(data, sourceConn);
+    }
+    else if (data.type === 'mob_spawn') {
+        if (data.mobType === 'deer' && typeof deers !== 'undefined' && typeof createDeerEntity === 'function') {
+            if (!deers.some(d => d.id === data.mobId)) {
+                let dObj = createDeerEntity(data.x, data.y, data.variant);
+                dObj.id = data.mobId;
+                dObj.direction = data.direction || 1;
+                deers.push(dObj);
+            }
+        } else if (data.mobType === 'camel' && typeof camels !== 'undefined' && typeof createCamelEntity === 'function') {
+            if (!camels.some(c => c.id === data.mobId)) {
+                let cObj = createCamelEntity(data.x, data.y, data.variant);
+                cObj.id = data.mobId;
+                cObj.direction = data.direction || 1;
+                camels.push(cObj);
+            }
+        } else if (data.mobType === 'fish' && typeof fishes !== 'undefined' && typeof createFishEntity === 'function') {
+            if (!fishes.some(f => f.id === data.mobId)) {
+                let fObj = createFishEntity(data.x, data.y, data.variant);
+                fObj.id = data.mobId;
+                fObj.direction = data.direction || 1;
+                fishes.push(fObj);
+            }
+        } else if (data.mobType === 'pig' && typeof pigs !== 'undefined') {
+            if (!pigs.some(p => p.id === data.mobId)) {
+                pigs.push({
+                    id: data.mobId || ("pig_" + Math.random().toString(36).substring(2, 8)),
+                    x: data.x,
+                    y: data.y,
+                    vx: (data.direction || 1) * 1.2,
+                    vy: -0.5,
+                    direction: data.direction || 1,
+                    width: 26,
+                    height: 18,
+                    wingFlap: 0,
+                    bombTimer: 1200 + Math.random() * 600,
+                    fleeWaterTimer: 0,
+                    waterSplashCooldown: 0,
+                    protectedUntil: performance.now() + 5000
+                });
+            }
+        }
         relayFromHost(data, sourceConn);
     }
     else if (data.type === 'opuntia_change') {
@@ -912,15 +1060,23 @@ function handleNetworkPacket(data, sourceConn) {
         relayFromHost(data, sourceConn);
     }
     else if (data.type === 'player_state') {
+        let now = performance.now();
         let prev = remotePlayers[data.senderId];
         if (!prev && data.nick && isPlaying && typeof addChatMessage === 'function') {
             addChatMessage(null, `➕ Gracz ${data.nick} dołączył do gry!`, 'system');
         }
         let prevSkin = prev ? prev.skinIndex : null;
+        let startX = (prev && typeof prev.x === 'number' && Math.hypot(data.x - prev.x, data.y - prev.y) < 90) ? prev.x : data.x;
+        let startY = (prev && typeof prev.y === 'number' && Math.hypot(data.x - prev.x, data.y - prev.y) < 90) ? prev.y : data.y;
+
         remotePlayers[data.senderId] = {
             nick: data.nick,
-            x: data.x,
-            y: data.y,
+            x: startX,
+            y: startY,
+            targetX: data.x,
+            targetY: data.y,
+            vx: data.vx || 0,
+            vy: data.vy || 0,
             direction: data.direction,
             walkFrame: data.walkFrame,
             skinIndex: data.skinIndex,
@@ -936,6 +1092,9 @@ function handleNetworkPacket(data, sourceConn) {
             camelWalkFrame: data.camelWalkFrame || 0,
             passengerOnPlayerId: data.passengerOnPlayerId || null,
             pickaxeAnim: data.pickaxeAnim,
+            miningX: typeof data.miningX === 'number' ? data.miningX : -1,
+            miningY: typeof data.miningY === 'number' ? data.miningY : -1,
+            miningProgress: data.miningProgress || 0,
             grounded: data.grounded,
             gameMode: data.gameMode || 0,
             isAdmin: Boolean(data.isAdmin),
@@ -946,7 +1105,8 @@ function handleNetworkPacket(data, sourceConn) {
             wormSegments: Array.isArray(data.wormSegments) ? data.wormSegments : (prev && prev.wormSegments ? prev.wormSegments : null),
             isHost: Boolean(data.isHost),
             inGame: true,
-            lastSeen: performance.now()
+            lastSeen: now,
+            lastDirectStateTime: now
         };
         if (!prev || prevSkin !== data.skinIndex) {
             if (typeof updateSkinAvailabilityUI === 'function') {
@@ -955,6 +1115,20 @@ function handleNetworkPacket(data, sourceConn) {
         }
         relayFromHost(data, sourceConn);
     }
+}
+
+function sendMobSpawnPacket(mobType, mobObj) {
+    if (!roomCode || !mobObj) return;
+    broadcastPacket({
+        type: 'mob_spawn',
+        senderId: myPlayerId,
+        mobType: mobType,
+        mobId: mobObj.id,
+        variant: mobObj.variant || null,
+        x: Math.round(mobObj.x),
+        y: Math.round(mobObj.y),
+        direction: mobObj.direction || 1
+    });
 }
 
 function sendOpuntiaChange(x, y, hasFruit) {
@@ -1114,17 +1288,28 @@ function sendPvpHit(targetId, damage, knockVx, knockVy, dismountPig = false, swa
     });
 }
 
-function sendPlayerState() {
+let lastPlayerStateSentTime = 0;
+
+function sendPlayerState(forceImmediate = false) {
     if (!roomCode || !isPlaying) return;
-    let pickaxeAnim = (isClicking && (miningX !== -1 || pvpHitCooldown > 15) && !showInventory && !isCommandOpen) ? pickaxeSwing : null;
+    let now = performance.now();
+    if (!forceImmediate && now - lastPlayerStateSentTime < 26) return; // Optymalne ~38 pakietów/s bez przeciążania łącza
+    lastPlayerStateSentTime = now;
+
+    let pickaxeAnim = (isClicking && (miningX !== -1 || pvpHitCooldown > 15) && !showInventory && !isCommandOpen) ? Number(pickaxeSwing.toFixed(2)) : null;
+    let curVx = player.ridingPig ? player.ridingPig.vx : (player.ridingCamel ? player.ridingCamel.vx : player.vx);
+    let curVy = player.ridingPig ? player.ridingPig.vy : (player.ridingCamel ? player.ridingCamel.vy : player.vy);
+
     broadcastPacket({
         type: 'player_state',
         senderId: myPlayerId,
         nick: playerNick,
-        x: player.x,
-        y: player.y,
+        x: Number(player.x.toFixed(2)),
+        y: Number(player.y.toFixed(2)),
+        vx: Number((curVx || 0).toFixed(2)),
+        vy: Number((curVy || 0).toFixed(2)),
         direction: player.direction,
-        walkFrame: player.walkFrame,
+        walkFrame: Number((player.walkFrame || 0).toFixed(2)),
         skinIndex: selectedSkinIndex,
         dead: player.dead,
         hp: player.hp,
@@ -1132,12 +1317,15 @@ function sendPlayerState() {
         damageEffect: player.damageEffect,
         isSwimming: player.isSwimming,
         isRiding: player.ridingPig !== null,
-        pigWingFlap: player.ridingPig ? player.ridingPig.wingFlap : 0,
+        pigWingFlap: player.ridingPig ? Number((player.ridingPig.wingFlap || 0).toFixed(2)) : 0,
         isRidingCamel: player.ridingCamel !== null,
         camelVariant: player.ridingCamel ? player.ridingCamel.variant : null,
         camelWalkFrame: player.ridingCamel ? Number((player.ridingCamel.walkFrame || 0).toFixed(2)) : 0,
         passengerOnPlayerId: player.passengerOnPlayerId || null,
         pickaxeAnim: pickaxeAnim,
+        miningX: miningX,
+        miningY: miningY,
+        miningProgress: Number((miningProgress || 0).toFixed(1)),
         grounded: player.grounded,
         gameMode: player.gameMode || 0,
         isAdmin: Boolean(player.isAdmin),
@@ -1253,7 +1441,8 @@ setInterval(() => {
             playersSnapshot: getActivePlayersSnapshot(null),
             wildPigs: getWildPigsSnapshot(),
         deers: getDeersSnapshot(),
-        camels: getCamelsSnapshot()
+        camels: getCamelsSnapshot(),
+        fishes: getFishesSnapshot()
         });
     }
 

@@ -6,6 +6,8 @@ let biomeMap = [];
 let surfaceHeights = [];
 let modifiedTiles = {};
 let cactusFruits = {};
+let worldStructures = []; // Struktury tła: { type: 'homestead' | 'campsite', x: tileX, y: groundTileY, startX, endX, flip, tentColor }
+let structureOccupiedX = {};
 let currentWorldSeed = Math.floor(Math.random() * 900000) + 100000;
 
 const SPAWN_TILE_X = Math.floor(MAP_WIDTH / 2);
@@ -47,27 +49,31 @@ function generateWorld(seedValue = currentWorldSeed) {
     let desertZones = [];
     let oceanZones = [];
 
+    worldStructures = [];
+    structureOccupiedX = {};
+
     let mainDesertOnLeft = rng() < 0.5;
     
-    let d1Width = 110 + Math.floor(rng() * 45);
+    // Powiększony zasięg Równin i Lasów wokół Spawnu oraz na całej powiększonej mapie (1650 kratek)
+    let d1Width = 115 + Math.floor(rng() * 45);
     let d1Start = mainDesertOnLeft 
-        ? Math.floor(SPAWN_TILE_X - 75 - d1Width - rng() * 60)
-        : Math.floor(SPAWN_TILE_X + 75 + rng() * 60);
+        ? Math.floor(SPAWN_TILE_X - 135 - d1Width - rng() * 75)
+        : Math.floor(SPAWN_TILE_X + 135 + rng() * 75);
     desertZones.push({ start: d1Start, end: d1Start + d1Width });
 
     let seaWidth = 115 + Math.floor(rng() * 45);
     let seaStart = !mainDesertOnLeft
-        ? Math.floor(SPAWN_TILE_X - 85 - seaWidth - rng() * 50)
-        : Math.floor(SPAWN_TILE_X + 85 + rng() * 50);
+        ? Math.floor(SPAWN_TILE_X - 145 - seaWidth - rng() * 70)
+        : Math.floor(SPAWN_TILE_X + 145 + rng() * 70);
     oceanZones.push({ start: seaStart, end: seaStart + seaWidth, maxDepth: 18 });
 
     oceanZones.push({ start: 18, end: 155 + Math.floor(rng() * 35), maxDepth: 24 });
     oceanZones.push({ start: MAP_WIDTH - 185 - Math.floor(rng() * 35), end: MAP_WIDTH - 18, maxDepth: 24 });
 
-    let d2Width = 95 + Math.floor(rng() * 35);
+    let d2Width = 100 + Math.floor(rng() * 35);
     let d2Start = !mainDesertOnLeft
-        ? Math.floor(220 + rng() * 70)
-        : Math.floor(MAP_WIDTH - 330 - rng() * 60);
+        ? Math.floor(240 + rng() * 80)
+        : Math.floor(MAP_WIDTH - 380 - rng() * 70);
     desertZones.push({ start: d2Start, end: d2Start + d2Width });
 
     for (let x = 0; x < MAP_WIDTH; x++) {
@@ -88,16 +94,17 @@ function generateWorld(seedValue = currentWorldSeed) {
             }
         }
 
-        if (Math.abs(x - SPAWN_TILE_X) < 40) {
+        // Szersza strefa Równin wokół Spawnu oraz znacznie większy udział Równin ('plains') i Lasu ('forest')
+        if (Math.abs(x - SPAWN_TILE_X) < 68) {
             biomeMap[x] = 'plains';
         } else if (inOcean) {
             biomeMap[x] = 'ocean';
         } else if (inDesert) {
             biomeMap[x] = 'desert';
         } else {
-            let bVal = smoothNoise(x, 70, SEED_3);
-            if (bVal < 0.35) biomeMap[x] = 'plains';
-            else if (bVal < 0.72) biomeMap[x] = 'forest';
+            let bVal = smoothNoise(x, 92, SEED_3);
+            if (bVal < 0.45) biomeMap[x] = 'plains';
+            else if (bVal < 0.86) biomeMap[x] = 'forest';
             else biomeMap[x] = 'hills';
         }
     }
@@ -146,6 +153,59 @@ function generateWorld(seedValue = currentWorldSeed) {
     const spawnH = surfaceHeights[SPAWN_TILE_X];
     surfaceHeights[SPAWN_TILE_X - 1] = spawnH;
     surfaceHeights[SPAWN_TILE_X + 1] = spawnH;
+
+    // Generowanie struktur w tle na biomach Równiny ('plains') oraz Las ('forest'):
+    // 1) 'homestead' — Drewniany domek ze studnią obok i małym polem uprawnym zboża
+    // 2) 'campsite'  — Obozowisko namiotów z ogniskiem obok
+    let lastStructureEndX = 45;
+    let nextTypeToggle = rng() < 0.5 ? 0 : 1;
+    for (let x = 55; x < MAP_WIDTH - 65; x++) {
+        if (x < lastStructureEndX + 52) continue;
+        if (Math.abs(x - SPAWN_TILE_X) < 22) continue;
+
+        let bCenter = biomeMap[x];
+        if (bCenter !== 'plains' && bCenter !== 'forest') continue;
+
+        let structType = (nextTypeToggle % 2 === 0) ? 'homestead' : 'campsite';
+        if (rng() < 0.25) structType = (structType === 'homestead') ? 'campsite' : 'homestead';
+        let halfSpan = (structType === 'homestead') ? 7 : 5;
+
+        // Sprawdź czy cały odcinek pod strukturę leży na równinie lub w lesie i ponad poziomem morza
+        let validSpot = true;
+        let baseH = surfaceHeights[x];
+        if (baseH >= SEA_LEVEL - 2 || baseH < 12) continue;
+
+        for (let sx = x - halfSpan - 2; sx <= x + halfSpan + 2; sx++) {
+            if (sx < 10 || sx >= MAP_WIDTH - 10) { validSpot = false; break; }
+            if (Math.abs(sx - SPAWN_TILE_X) < 12) { validSpot = false; break; }
+            let sb = biomeMap[sx];
+            if (sb !== 'plains' && sb !== 'forest') { validSpot = false; break; }
+            if (Math.abs(surfaceHeights[sx] - baseH) > 3) { validSpot = false; break; }
+        }
+        if (!validSpot) continue;
+
+        if (rng() < 0.22) {
+            // Wyrównaj podłoże pod domkiem/studnią/polem zboża lub obozowiskiem namiotów, oraz wygładź wejścia po bokach
+            for (let sx = x - halfSpan; sx <= x + halfSpan; sx++) {
+                surfaceHeights[sx] = baseH;
+                structureOccupiedX[sx] = true;
+            }
+            surfaceHeights[x - halfSpan - 1] = Math.round((surfaceHeights[x - halfSpan - 2] + baseH) / 2);
+            surfaceHeights[x + halfSpan + 1] = Math.round((surfaceHeights[x + halfSpan + 2] + baseH) / 2);
+
+            worldStructures.push({
+                type: structType, // 'homestead' | 'campsite'
+                x: x,
+                y: baseH,
+                startX: x - halfSpan,
+                endX: x + halfSpan,
+                flip: rng() < 0.5 ? 1 : -1,
+                tentVariant: Math.floor(rng() * 3)
+            });
+            nextTypeToggle++;
+            lastStructureEndX = x + halfSpan;
+        }
+    }
 
     for (let x = 0; x < MAP_WIDTH; x++) {
         map[x] = [];
@@ -242,7 +302,7 @@ function generateWorld(seedValue = currentWorldSeed) {
     const coralTypes = [BLOCKS.CORAL_PINK, BLOCKS.CORAL_CYAN, BLOCKS.CORAL_GOLD];
 
     for (let x = 8; x < MAP_WIDTH - 8; x++) {
-        if (Math.abs(x - SPAWN_TILE_X) < 5) continue;
+        if (Math.abs(x - SPAWN_TILE_X) < 5 || structureOccupiedX[x]) continue;
 
         let y = surfaceHeights[x];
         let groundBlock = map[x][y];

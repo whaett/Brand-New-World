@@ -47,12 +47,14 @@ let regenTimer = 0;
 let pigs = []; 
 let deers = [];
 let camels = [];
+let fishes = [];
 let bombs = [];
 let waterBubbles = [];
 let splashParticles = [];
 
 spawnInitialForestDeers();
 spawnInitialDesertCamels();
+spawnInitialOceanFishes();
 
 let sandworm = { 
     active: false, x: 0, y: 0, targetX: 0, targetY: 0, 
@@ -75,7 +77,7 @@ function getDeerDimensions(variant) {
 // ale kolidują z ziemią, trawą, kamieniem, piaskiem i innymi twardymi blokami terenu.
 function isPassableForDeer(block) {
     return block === BLOCKS.AIR || block === BLOCKS.WATER || block === BLOCKS.KELP ||
-           block === BLOCKS.ACID || block === BLOCKS.WOOD || block === BLOCKS.LEAVES;
+           block === BLOCKS.ACID || block === BLOCKS.WOOD || block === BLOCKS.LEAVES || block === BLOCKS.OPUNTIA;
 }
 
 function checkDeerCollision(x, y, w, h) {
@@ -91,10 +93,10 @@ function checkDeerCollision(x, y, w, h) {
     return false;
 }
 
-// Wyszukuje bezpieczną, płaską pozycję nad ziemią bez kolizji z blokami i poza wodą
+// Wyszukuje bezpieczną pozycję nad ziemią bez kolizji z blokami i poza wodą
 function findSafeDeerSpawnPos(baseTx, variant) {
     const dims = getDeerDimensions(variant);
-    for (let offset = 0; offset <= 10; offset++) {
+    for (let offset = 0; offset <= 14; offset++) {
         let dirs = offset === 0 ? [0] : [-offset, offset];
         for (let d of dirs) {
             let tx = baseTx + d;
@@ -103,18 +105,16 @@ function findSafeDeerSpawnPos(baseTx, variant) {
             if (!sy || sy >= SEA_LEVEL - 1 || sy < 6) continue;
             let groundBlk = map[tx] ? map[tx][sy] : BLOCKS.AIR;
             if (groundBlk !== BLOCKS.GRASS && groundBlk !== BLOCKS.DIRT) continue;
-            // Unikaj stromych uskoków (więcej niż 1 blok różnicy wysokości obok)
-            if (Math.abs((surfaceHeights[tx + 1] || sy) - sy) > 1) continue;
 
             let spawnX = tx * TILE_SIZE;
             let spawnY = sy * TILE_SIZE - dims.height;
 
-            // Jeśli teren obok jest o 1 blok wyżej, podnieś pozycję startową o 1 blok
-            if (checkDeerCollision(spawnX, spawnY, dims.width, dims.height)) {
+            // Jeśli sąsiedni kafelek pod szerokością jelenia jest wyżej, podnieś pozycję startową (do 3 bloków w górę)
+            for (let lift = 0; lift < 4; lift++) {
+                if (!checkDeerCollision(spawnX, spawnY, dims.width, dims.height)) {
+                    return { x: spawnX, y: spawnY, tx: tx };
+                }
                 spawnY -= TILE_SIZE;
-            }
-            if (!checkDeerCollision(spawnX, spawnY, dims.width, dims.height)) {
-                return { x: spawnX, y: spawnY, tx: tx };
             }
         }
     }
@@ -122,17 +122,17 @@ function findSafeDeerSpawnPos(baseTx, variant) {
 }
 
 // Losuje skład grupy jeleni:
-// - 65% szans: pojedynczy osobnik (Byk, Łania lub rzadziej Cielę)
-// - 25% szans: dwójka (Łania + Cielę lub Byk + Łania)
-// - 10% szans: trójka / pełna rodzinka (Byk + Łania + Cielę)
+// - 70% szans: pojedynczy osobnik (Byk, Łania lub rzadziej Cielę)
+// - 22% szans: dwójka (Łania + Cielę lub Byk + Łania)
+// - 8% szans: trójka / pełna rodzinka (Byk + Łania + Cielę)
 function pickDeerSpawnGroup() {
     let r = Math.random();
-    if (r < 0.72) {
+    if (r < 0.70) {
         let vRand = Math.random();
         if (vRand < 0.45) return ['lania'];
         if (vRand < 0.85) return ['byk'];
         return ['ciele'];
-    } else if (r < 0.94) {
+    } else if (r < 0.92) {
         return Math.random() < 0.55 ? ['lania', 'ciele'] : ['byk', 'lania'];
     } else {
         return ['byk', 'lania', 'ciele'];
@@ -160,6 +160,7 @@ function createDeerEntity(x, y, variant = 'lania') {
         variant: variant, // 'byk' | 'lania' | 'ciele'
         x: x,
         y: y,
+        lastX: x,
         vx: 0,
         vy: 0,
         width: dims.width,
@@ -171,32 +172,34 @@ function createDeerEntity(x, y, variant = 'lania') {
         state: 'walk', // 'walk' | 'idle' | 'graze'
         stateTimer: 90 + Math.floor(Math.random() * 140),
         grazeProgress: 0,
-        jumpCooldown: 0
+        jumpCooldown: 0,
+        turnCooldown: 0,
+        stuckTimer: 0
     };
 }
 
 function spawnInitialForestDeers() {
     deers = [];
     let forestCenters = [];
-    for (let tx = 60; tx < MAP_WIDTH - 60; tx += 45) {
-        if (isForestAt(tx) && countTreesNearTileX(tx, 16) >= 3) {
+    for (let tx = 40; tx < MAP_WIDTH - 40; tx += 32) {
+        if ((isForestAt(tx) && countTreesNearTileX(tx, 16) >= 1) || countTreesNearTileX(tx, 16) >= 2) {
             let sy = surfaceHeights[tx];
             if (sy < SEA_LEVEL - 1 && map[tx] && map[tx][sy] === BLOCKS.GRASS) {
                 forestCenters.push(tx);
-                tx += 180; // Duży odstęp — jelenie są rzadkim widokiem
+                tx += 65; // Częstsze występowanie w lasach na całej mapie
             }
         }
     }
-    if (forestCenters.length < 2) {
-        for (let tx = 80; tx < MAP_WIDTH - 80; tx += 220) {
+    if (forestCenters.length < 5) {
+        for (let tx = 50; tx < MAP_WIDTH - 50; tx += 85) {
             if (isForestAt(tx) && surfaceHeights[tx] < SEA_LEVEL - 1) {
                 forestCenters.push(tx);
-                if (forestCenters.length >= 2) break;
+                if (forestCenters.length >= 6) break;
             }
         }
     }
 
-    for (let i = 0; i < Math.min(2, forestCenters.length); i++) {
+    for (let i = 0; i < Math.min(7, forestCenters.length); i++) {
         spawnDeerGroupAtTile(forestCenters[i]);
     }
 }
@@ -224,14 +227,14 @@ function getCamelSpeciesAndRole(variant) {
 function getCamelDimensions(variant) {
     const info = getCamelSpeciesAndRole(variant);
     if (info.species === 'wielblad') {
-        if (info.role === 'samiec') return { width: 34, height: 27, speed: 0.54 };
-        if (info.role === 'samica') return { width: 30, height: 24, speed: 0.58 };
-        return { width: 21, height: 18, speed: 0.66 }; // 'wielblad_mlody'
+        if (info.role === 'samiec') return { width: 34, height: 27, speed: 0.56 };
+        if (info.role === 'samica') return { width: 30, height: 24, speed: 0.60 };
+        return { width: 21, height: 18, speed: 0.68 }; // 'wielblad_mlody'
     } else {
         // 'dromader'
-        if (info.role === 'samiec') return { width: 32, height: 26, speed: 0.60 };
-        if (info.role === 'samica') return { width: 28, height: 23, speed: 0.64 };
-        return { width: 19, height: 17, speed: 0.70 }; // 'dromader_mlody'
+        if (info.role === 'samiec') return { width: 32, height: 26, speed: 0.62 };
+        if (info.role === 'samica') return { width: 28, height: 23, speed: 0.66 };
+        return { width: 19, height: 17, speed: 0.72 }; // 'dromader_mlody'
     }
 }
 
@@ -239,7 +242,8 @@ function getCamelDimensions(variant) {
 // ale kolidują z piaskiem, ziemią, kamieniem i twardym podłożem.
 function isPassableForCamel(block) {
     return block === BLOCKS.AIR || block === BLOCKS.WATER || block === BLOCKS.KELP ||
-           block === BLOCKS.ACID || block === BLOCKS.CACTUS || block === BLOCKS.WOOD || block === BLOCKS.LEAVES;
+           block === BLOCKS.ACID || block === BLOCKS.CACTUS || block === BLOCKS.WOOD ||
+           block === BLOCKS.LEAVES || block === BLOCKS.OPUNTIA;
 }
 
 function checkCamelCollision(x, y, w, h) {
@@ -258,7 +262,7 @@ function checkCamelCollision(x, y, w, h) {
 // Wyszukuje bezpieczne miejsce na pustyni (na piasku) bez kolizji z blokami i poza wodą
 function findSafeCamelSpawnPos(baseTx, variant) {
     const dims = getCamelDimensions(variant);
-    for (let offset = 0; offset <= 10; offset++) {
+    for (let offset = 0; offset <= 14; offset++) {
         let dirs = offset === 0 ? [0] : [-offset, offset];
         for (let d of dirs) {
             let tx = baseTx + d;
@@ -268,49 +272,49 @@ function findSafeCamelSpawnPos(baseTx, variant) {
             if (!sy || sy >= SEA_LEVEL - 1 || sy < 6) continue;
             let groundBlk = map[tx] ? map[tx][sy] : BLOCKS.AIR;
             if (groundBlk !== BLOCKS.SAND) continue;
-            if (Math.abs((surfaceHeights[tx + 1] || sy) - sy) > 1) continue;
 
             let spawnX = tx * TILE_SIZE;
             let spawnY = sy * TILE_SIZE - dims.height;
 
-            if (checkCamelCollision(spawnX, spawnY, dims.width, dims.height)) {
+            for (let lift = 0; lift < 4; lift++) {
+                if (!checkCamelCollision(spawnX, spawnY, dims.width, dims.height)) {
+                    return { x: spawnX, y: spawnY, tx: tx };
+                }
                 spawnY -= TILE_SIZE;
-            }
-            if (!checkCamelCollision(spawnX, spawnY, dims.width, dims.height)) {
-                return { x: spawnX, y: spawnY, tx: tx };
             }
         }
     }
     return null;
 }
 
-// Wybiera gatunek dla danego obszaru pustyni tak, aby Wielbłądy i Dromadery pojawiały się osobno
+// Wybiera gatunek dla danego obszaru pustyni tak, aby Wielbłądy i Dromadery pojawiały się w osobnych skupiskach
 function chooseCamelSpeciesForTile(baseTx, forcedSpecies = null) {
     if (forcedSpecies === 'wielblad' || forcedSpecies === 'dromader') return forcedSpecies;
     let worldX = baseTx * TILE_SIZE;
-    // Jeśli w promieniu 75 bloków jest już jakiś osobnik, zachowaj ten sam gatunek w tej okolicy
+    // Jeśli w promieniu 60 bloków jest już jakiś osobnik, zachowaj ten sam gatunek w tej okolicy
     for (let other of camels) {
-        if (Math.abs(other.x - worldX) < 75 * TILE_SIZE) {
+        if (Math.abs(other.x - worldX) < 60 * TILE_SIZE) {
             return getCamelSpeciesAndRole(other.variant).species;
         }
     }
-    // W przeciwnym razie przypisz gatunek deterministycznie do strefy pustyni (lewa/prawa pustynia ma swój gatunek) + lekka losowość
-    return (baseTx < MAP_WIDTH / 2) ? 'dromader' : 'wielblad';
+    // W przeciwnym razie przypisz gatunek na podstawie sektora mapy, aby oba gatunki występowały na pustyniach, ale w osobnych stadach
+    let sector = Math.floor(baseTx / 70);
+    return (sector % 2 === 0) ? 'dromader' : 'wielblad';
 }
 
 // Losuje skład grupy w obrębie JEDNEGO gatunku ('wielblad' ALBO 'dromader' — nigdy mieszane!):
-// - 72% szans: pojedynczy osobnik (samica, samiec lub rzadziej młody)
+// - 70% szans: pojedynczy osobnik (samica, samiec lub rzadziej młody)
 // - 22% szans: dwójka tego samego gatunku (samica + młody lub samiec + samica)
-// - 6% szans: trójka / rodzinka tego samego gatunku (samiec + samica + młody)
+// - 8% szans: trójka / rodzinka tego samego gatunku (samiec + samica + młody)
 function pickCamelSpawnGroup(species) {
     let sp = (species === 'wielblad' || species === 'dromader') ? species : (Math.random() < 0.5 ? 'wielblad' : 'dromader');
     let r = Math.random();
-    if (r < 0.72) {
+    if (r < 0.70) {
         let vRand = Math.random();
         if (vRand < 0.45) return [`${sp}_samica`];
         if (vRand < 0.85) return [`${sp}_samiec`];
         return [`${sp}_mlody`];
-    } else if (r < 0.94) {
+    } else if (r < 0.92) {
         return Math.random() < 0.55
             ? [`${sp}_samica`, `${sp}_mlody`]
             : [`${sp}_samiec`, `${sp}_samica`];
@@ -344,6 +348,7 @@ function createCamelEntity(x, y, variant = 'dromader_samica') {
         role: info.role,       // 'samiec' | 'samica' | 'mlody'
         x: x,
         y: y,
+        lastX: x,
         vx: 0,
         vy: 0,
         width: dims.width,
@@ -356,6 +361,8 @@ function createCamelEntity(x, y, variant = 'dromader_samica') {
         stateTimer: 100 + Math.floor(Math.random() * 150),
         grazeProgress: 0,
         jumpCooldown: 0,
+        turnCooldown: 0,
+        stuckTimer: 0,
         isTamed: false
     };
 }
@@ -382,7 +389,7 @@ function dismountPassengerCamel() {
     if (typeof sendPlayerState === 'function') sendPlayerState();
 }
 
-// Zsiadanie z oswojonego wielbłąda dwugarbnego (jako kierowca - 1. osoba)
+// Zsiadanie z oswojonego wielbłąda lub dromadera (jako kierowca - 1. osoba)
 function dismountCurrentCamel(broadcast = true) {
     if (!player.ridingCamel) return;
     let camel = player.ridingCamel;
@@ -399,8 +406,7 @@ function dismountCurrentCamel(broadcast = true) {
     if (typeof sendPlayerState === 'function') sendPlayerState();
 }
 
-// Karmienie wielbłąda owocem opuncji z ręki, wsiadanie jako 1. osoba (kierowca) oraz dosiadanie się jako 2. osoba (pasażer)
-// UWAGA: Jeździć można TYLKO na Wielbłądzie dwugarbnym ('wielblad'), bo ma 2 garby i miejsce na 2 osoby!
+// Karmienie wielbłąda/dromadera owocem opuncji z ręki, wsiadanie jako 1. osoba (kierowca) oraz dosiadanie się jako 2. osoba (pasażer na Wielbłądzie dwugarbnym)
 function tryInteractWithCamel(worldMouseX, worldMouseY, isRightClick) {
     if (player.dead || player.inStomach || player.isSandworm || player.camelInteractCooldown > 0) return false;
     let playerCenterX = player.x + player.width / 2;
@@ -471,19 +477,42 @@ function tryInteractWithCamel(worldMouseX, worldMouseY, isRightClick) {
         let info = getCamelSpeciesAndRole(c.variant);
         let isTwoHumped = (info.species === 'wielblad');
 
-        // 1. Oswajanie owocem opuncji z ręki (działa zarówno na Wielbłąda dwugarbnego, jak i na Dromadera!)
-        if (holdingOpuntia && (!c.isTamed || info.role === 'mlody')) {
+        // 0. BLOKADA JAZDY NA MAŁYM WIELBŁĄDZIE / DROMADERZE ('mlody'):
+        // Mały osobnik nie zamienia się w dużego po nakarmieniu i nie można na nim jeździć!
+        if (info.role === 'mlody') {
+            if (holdingOpuntia) {
+                removeSelectedItem();
+                player.camelInteractCooldown = 18;
+                c.state = 'idle';
+                c.vx = 0;
+                c.stateTimer = 90;
+                for (let p = 0; p < 8; p++) {
+                    splashParticles.push({
+                        x: cCenterX + (Math.random() - 0.5) * 14,
+                        y: c.y + (Math.random() - 0.5) * 8,
+                        vx: (Math.random() - 0.5) * 1.2,
+                        vy: -0.8 - Math.random() * 1.0,
+                        size: 2.4,
+                        color: (p % 2 === 0) ? '#fb7185' : '#fde047',
+                        life: 22
+                    });
+                }
+                let youngLabel = isTwoHumped ? "Mały wielbłąd" : "Mały dromader";
+                showSystemNotification(`🐪 ${youngLabel} ze smakiem zjadł owoc opuncji, ale jest za mały, żeby na nim jeździć!`, "#ffeb3b", 220, false);
+                return true;
+            } else if (isRightClick) {
+                player.camelInteractCooldown = 18;
+                let youngLabel = isTwoHumped ? "Mały wielbłąd" : "Mały dromader";
+                showSystemNotification(`🐪 ${youngLabel} jest za mały — jeździć można tylko na dorosłych osobnikach!`, "#ff9800", 210, false);
+                return true;
+            }
+            continue;
+        }
+
+        // 1. Oswajanie dorosłego osobnika owocem opuncji z ręki (działa na dorosłego Wielbłąda dwugarbnego oraz dorosłego Dromadera)
+        if (holdingOpuntia && !c.isTamed) {
             removeSelectedItem();
             player.camelInteractCooldown = 18;
-            if (info.role === 'mlody') {
-                c.variant = `${info.species}_samica`;
-                c.role = 'samica';
-                let newDims = getCamelDimensions(c.variant);
-                c.y -= Math.max(0, newDims.height - c.height);
-                c.width = newDims.width;
-                c.height = newDims.height;
-                c.baseSpeed = newDims.speed;
-            }
             c.isTamed = true;
             c.state = 'idle';
             c.vx = 0;
@@ -511,8 +540,8 @@ function tryInteractWithCamel(worldMouseX, worldMouseY, isRightClick) {
             return true;
         }
 
-        // 2. Wsiadanie na oswojonego Wielbłąda dwugarbnego (2-osobowego) lub Dromadera (1-osobowego)
-        if (c.isTamed && (isRightClick || holdingOpuntia)) {
+        // 2. Wsiadanie na dorosłego, oswojonego Wielbłąda dwugarbnego (2-osobowego) lub Dromadera (1-osobowego)
+        if (c.isTamed && info.role !== 'mlody' && (isRightClick || holdingOpuntia)) {
             if (player.ridingPig) {
                 dismountCurrentPig(false, true, false);
             }
@@ -548,19 +577,311 @@ function tryInteractWithCamel(worldMouseX, worldMouseY, isRightClick) {
 function spawnInitialDesertCamels() {
     camels = [];
     let desertCenters = [];
-    for (let tx = 45; tx < MAP_WIDTH - 45; tx += 45) {
+    for (let tx = 35; tx < MAP_WIDTH - 35; tx += 30) {
         if (isDesertAt(tx)) {
             let sy = surfaceHeights[tx];
             if (sy < SEA_LEVEL - 1 && map[tx] && map[tx][sy] === BLOCKS.SAND) {
                 desertCenters.push(tx);
-                tx += 180; // Duży odstęp — osobne siedliska na pustyni
+                tx += 58; // Znacznie częstsze występowanie na pustyniach (w osobnych siedliskach)
             }
         }
     }
-    // Pierwsze siedlisko pustynne otrzymuje Dromadery, a drugie Wielbłądy dwugarbne (całkowicie osobno!)
     const speciesOrder = ['dromader', 'wielblad'];
-    for (let i = 0; i < Math.min(2, desertCenters.length); i++) {
+    for (let i = 0; i < Math.min(7, desertCenters.length); i++) {
         spawnCamelGroupAtTile(desertCenters[i], speciesOrder[i % 2]);
+    }
+}
+
+function generateFishId() {
+    return "fish_" + myPlayerId + "_" + Math.random().toString(36).substring(2, 8);
+}
+
+// 4 gatunki ryb w wodzie:
+// 0: 'blazenek'  - Błazenek koralowy (pływa w ławicach blisko koralowców; karmiony Wodorostami daje pełny tlen i czasem wypluwa skarb!)
+// 1: 'zlota'     - Złota Rybka / Skalar (wyskakuje łukiem ponad taflę wody robiąc salta i ucieka w popłochu z bąbelkami!)
+// 2: 'rozdymka'  - Rozdymka Kolczasta (gdy gracz podpłynie blisko, nadyma się 2.5x w kolczastą kulę i lekko kłuje!)
+// 3: 'glebinowa' - Świecąca Ryba Głębinowa / Żabnica (posiada bioluminescencyjną latarenkę oświetlającą głębiny i noc!)
+function getFishDimensions(variant) {
+    if (variant === 'rozdymka') return { width: 14, height: 11, speed: 0.55 };
+    if (variant === 'glebinowa') return { width: 18, height: 12, speed: 0.52 };
+    if (variant === 'zlota') return { width: 15, height: 10, speed: 0.82 };
+    return { width: 13, height: 9, speed: 0.72 }; // 'blazenek'
+}
+
+function createFishEntity(x, y, variant = 'blazenek') {
+    const dims = getFishDimensions(variant);
+    let dir = Math.random() > 0.5 ? 1 : -1;
+    return {
+        id: generateFishId(),
+        variant: variant, // 'blazenek' | 'zlota' | 'rozdymka' | 'glebinowa'
+        x: x,
+        y: y,
+        vx: dir * dims.speed,
+        vy: (Math.random() - 0.5) * 0.3,
+        width: dims.width,
+        height: dims.height,
+        baseSpeed: dims.speed,
+        direction: dir,
+        swimPhase: Math.random() * 10,
+        state: 'swim', // 'swim' | 'dart' | 'leap' | 'flop'
+        stateTimer: 80 + Math.floor(Math.random() * 120),
+        isPuffed: false,
+        puffTimer: 0,
+        puffScale: 1.0,
+        fedCooldown: 0
+    };
+}
+
+function findSafeWaterTileForFish(baseTx) {
+    for (let offset = 0; offset <= 14; offset++) {
+        let dirs = offset === 0 ? [0] : [-offset, offset];
+        for (let d of dirs) {
+            let tx = baseTx + d;
+            if (tx < 8 || tx >= MAP_WIDTH - 8) continue;
+            let floorY = surfaceHeights[tx];
+            if (!floorY || floorY <= SEA_LEVEL + 3) continue;
+            let minWaterY = SEA_LEVEL + 1;
+            let maxWaterY = floorY - 2;
+            if (maxWaterY <= minWaterY) continue;
+            let ty = minWaterY + Math.floor(Math.random() * (maxWaterY - minWaterY + 1));
+            if (getTile(tx, ty) === BLOCKS.WATER || getTile(tx, ty) === BLOCKS.KELP) {
+                return { x: tx * TILE_SIZE, y: ty * TILE_SIZE, tx, ty, floorY };
+            }
+        }
+    }
+    return null;
+}
+
+function spawnFishSchoolAtTile(baseTx) {
+    let pos = findSafeWaterTileForFish(baseTx);
+    if (!pos) return 0;
+    let depth = pos.ty - SEA_LEVEL;
+    let r = Math.random();
+    let spawned = 0;
+
+    if (depth >= 9 && r < 0.25) {
+        // W głębinach pojawia się Świecąca Ryba Głębinowa (pojedynczo lub w parze)
+        fishes.push(createFishEntity(pos.x, pos.y, 'glebinowa'));
+        spawned++;
+        if (Math.random() < 0.35) {
+            fishes.push(createFishEntity(pos.x + 18, pos.y + 6, 'glebinowa'));
+            spawned++;
+        }
+    } else if (r < 0.55) {
+        // Ławica Błazenków koralowych (2 do 4 rybek blisko siebie)
+        let count = 2 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < count; i++) {
+            fishes.push(createFishEntity(pos.x + i * 14, pos.y + (i % 2) * 8, 'blazenek'));
+            spawned++;
+        }
+    } else if (r < 0.80) {
+        // Złote Rybki skaczące nad wodą (1-2 osobniki blisko tafli)
+        let surfY = (SEA_LEVEL + 2 + Math.floor(Math.random() * 3)) * TILE_SIZE;
+        fishes.push(createFishEntity(pos.x, surfY, 'zlota'));
+        spawned++;
+        if (Math.random() < 0.50) {
+            fishes.push(createFishEntity(pos.x + 16, surfY + 6, 'zlota'));
+            spawned++;
+        }
+    } else {
+        // Rozdymka Kolczasta (1-2 osobniki)
+        fishes.push(createFishEntity(pos.x, pos.y, 'rozdymka'));
+        spawned++;
+    }
+    return spawned;
+}
+
+function spawnInitialOceanFishes() {
+    fishes = [];
+    for (let tx = 24; tx < MAP_WIDTH - 24; tx += 36) {
+        if (isOceanAt(tx) && surfaceHeights[tx] > SEA_LEVEL + 5) {
+            spawnFishSchoolAtTile(tx);
+            tx += 42;
+            if (fishes.length >= 18) break;
+        }
+    }
+}
+
+// Interakcja PPM z rybką: karmienie Błazenka lub Złotej Rybki Wodorostami (BLOCKS.KELP) -> odnawia tlen i daje szansę na podwodny skarb!
+function tryInteractWithFish(worldMouseX, worldMouseY, isRightClick) {
+    if (!isRightClick || player.dead || player.inStomach || player.isSandworm) return false;
+    let currentItem = hotbar[selectedSlotIndex];
+    if (!currentItem || currentItem.type !== BLOCKS.KELP || currentItem.count <= 0) return false;
+
+    let playerCenterX = player.x + player.width / 2;
+    let playerCenterY = player.y + player.height / 2;
+    let maxDist = 4.6 * TILE_SIZE;
+
+    for (let f of fishes) {
+        if (!f || f.fedCooldown > 0) continue;
+        let fcx = f.x + f.width / 2;
+        let fcy = f.y + f.height / 2;
+        if (Math.hypot(fcx - playerCenterX, fcy - playerCenterY) > maxDist) continue;
+        if (worldMouseX >= f.x - 10 && worldMouseX <= f.x + f.width + 10 &&
+            worldMouseY >= f.y - 10 && worldMouseY <= f.y + f.height + 10) {
+            removeSelectedItem();
+            f.fedCooldown = 240;
+            // Odnów pełny zapas tlenu gracza pod wodą!
+            player.air = player.maxAir;
+            player.drownTimer = 0;
+
+            for (let b = 0; b < 8; b++) {
+                waterBubbles.push({
+                    x: fcx + (Math.random() - 0.5) * 14,
+                    y: fcy + (Math.random() - 0.5) * 10,
+                    vy: -0.7 - Math.random() * 0.6,
+                    r: 2.0 + Math.random() * 1.5
+                });
+                splashParticles.push({
+                    x: fcx + (Math.random() - 0.5) * 14,
+                    y: fcy + (Math.random() - 0.5) * 10,
+                    vx: (Math.random() - 0.5) * 1.4,
+                    vy: -0.8 - Math.random() * 1.0,
+                    size: 2.4,
+                    color: (b % 2 === 0) ? '#fde047' : '#38bdf8',
+                    life: 24
+                });
+            }
+
+            if (Math.random() < 0.40) {
+                let rewardBlock = (Math.random() < 0.45) ? BLOCKS.DIAMOND : BLOCKS.CORAL_GOLD;
+                addToInventory(rewardBlock, 1);
+                let rewardName = (rewardBlock === BLOCKS.DIAMOND) ? "Diament 💎" : "Złoty Koral 🪸";
+                showSystemNotification(`🐠 Nakarmiłeś rybkę wodorostem! Odnaleziony na dnie skarb: ${rewardName} + Pełny Tlen!`, "#4caf50", 230, true);
+            } else {
+                showSystemNotification("🐠 Nakarmiłeś rybkę wodorostem! Rybka wypuściła dla Ciebie świeże bąbelki tlenu (100% Tlenu)!", "#38bdf8", 210, false);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// ==========================================
+// KOMENDY SPAWNOWANIA ZWIERZĄT (/jelen, /wielblad, /dromader, /ryba, /swinia)
+// ==========================================
+function spawnAnimalCommand(mobCategory, argStr) {
+    if (player.dead) return;
+    if (player.inStomach) {
+        showSystemNotification("Nie można spawnować zwierząt wewnątrz żołądka Czerwia!", "#ff5252", 200, true);
+        return;
+    }
+
+    let cleanArg = (argStr || "").trim().toLowerCase();
+    let dir = player.direction || 1;
+    let spawnX = Math.round(player.x + dir * 32);
+    let spawnY = Math.round(player.y - 6);
+    spawnX = Math.max(TILE_SIZE * 2, Math.min((MAP_WIDTH - 4) * TILE_SIZE, spawnX));
+
+    if (mobCategory === 'jelen') {
+        let variant = 'byk';
+        let label = "Byka (0 - Samiec z porożem)";
+        if (cleanArg === '1' || cleanArg === 'lania' || cleanArg === 'samica' || cleanArg === 'kobieta') {
+            variant = 'lania';
+            label = "Łanię (1 - Samica)";
+        } else if (cleanArg === '2' || cleanArg === 'ciele' || cleanArg === 'dziecko' || cleanArg === 'mlody') {
+            variant = 'ciele';
+            label = "Cielę (2 - Dziecko / Jelonek)";
+        } else if (cleanArg === '' || cleanArg === '0' || cleanArg === 'byk' || cleanArg === 'samiec' || cleanArg === 'mezczyzna') {
+            variant = 'byk';
+            label = "Byka (0 - Samiec z porożem)";
+        } else {
+            showSystemNotification("Użycie: /jelen [0 | 1 | 2]  (0 - Byk/Samiec, 1 - Łania/Samica, 2 - Cielę/Dziecko)", "#ff5252", 220, true);
+            return;
+        }
+
+        let dims = getDeerDimensions(variant);
+        let sy = player.y + player.height - dims.height;
+        for (let lift = 0; lift < 4; lift++) {
+            if (!checkDeerCollision(spawnX, sy, dims.width, dims.height)) break;
+            sy -= TILE_SIZE;
+        }
+        let dObj = createDeerEntity(spawnX, sy, variant);
+        deers.push(dObj);
+        if (typeof sendMobSpawnPacket === 'function') {
+            sendMobSpawnPacket('deer', dObj);
+        }
+        showSystemNotification(`🦌 Zespawnowano Jelenia: ${label}!`, "#4caf50", 210, true);
+    } else if (mobCategory === 'wielblad' || mobCategory === 'dromader') {
+        let sp = (mobCategory === 'wielblad') ? 'wielblad' : 'dromader';
+        let spName = (sp === 'wielblad') ? "Wielbłąda dwugarbnego" : "Dromadera jednogarbnego";
+        let role = 'samiec';
+        let roleLabel = "0 - Samiec";
+
+        if (cleanArg === '1' || cleanArg === 'samica' || cleanArg === 'kobieta') {
+            role = 'samica';
+            roleLabel = "1 - Samica";
+        } else if (cleanArg === '2' || cleanArg === 'mlody' || cleanArg === 'dziecko' || cleanArg === 'maly') {
+            role = 'mlody';
+            roleLabel = "2 - Dziecko / Młody";
+        } else if (cleanArg === '' || cleanArg === '0' || cleanArg === 'samiec' || cleanArg === 'mezczyzna') {
+            role = 'samiec';
+            roleLabel = "0 - Samiec";
+        } else {
+            showSystemNotification(`Użycie: /${mobCategory} [0 | 1 | 2]  (0 - Samiec, 1 - Samica, 2 - Dziecko/Młody)`, "#ff5252", 220, true);
+            return;
+        }
+
+        let fullVar = `${sp}_${role}`;
+        let dims = getCamelDimensions(fullVar);
+        let sy = player.y + player.height - dims.height;
+        for (let lift = 0; lift < 4; lift++) {
+            if (!checkCamelCollision(spawnX, sy, dims.width, dims.height)) break;
+            sy -= TILE_SIZE;
+        }
+        let cObj = createCamelEntity(spawnX, sy, fullVar);
+        camels.push(cObj);
+        if (typeof sendMobSpawnPacket === 'function') {
+            sendMobSpawnPacket('camel', cObj);
+        }
+        showSystemNotification(`🐪 Zespawnowano ${spName} (${roleLabel})!`, "#4caf50", 210, true);
+    } else if (mobCategory === 'ryba') {
+        let variant = 'blazenek';
+        let label = "Błazenka koralowego (0)";
+        if (cleanArg === '1' || cleanArg === 'zlota' || cleanArg === 'skalar') {
+            variant = 'zlota';
+            label = "Złotą Rybkę skaczącą (1)";
+        } else if (cleanArg === '2' || cleanArg === 'rozdymka' || cleanArg === 'kolczasta') {
+            variant = 'rozdymka';
+            label = "Rozdymkę kolczastą (2)";
+        } else if (cleanArg === '3' || cleanArg === 'glebinowa' || cleanArg === 'zabnica') {
+            variant = 'glebinowa';
+            label = "Świecącą Rybę Głębinową (3)";
+        } else if (cleanArg === '' || cleanArg === '0' || cleanArg === 'blazenek') {
+            variant = 'blazenek';
+            label = "Błazenka koralowego (0)";
+        } else {
+            showSystemNotification("Użycie: /ryba [0 | 1 | 2 | 3]  (0 - Błazenek, 1 - Złota Rybka, 2 - Rozdymka, 3 - Głębinowa)", "#ff5252", 220, true);
+            return;
+        }
+
+        let fObj = createFishEntity(spawnX, player.y + 4, variant);
+        fishes.push(fObj);
+        if (typeof sendMobSpawnPacket === 'function') {
+            sendMobSpawnPacket('fish', fObj);
+        }
+        showSystemNotification(`🐠 Zespawnowano rybę: ${label}!`, "#38bdf8", 210, true);
+    } else if (mobCategory === 'swinia') {
+        let newPig = {
+            id: generatePigId(),
+            x: spawnX,
+            y: player.y - 24,
+            vx: dir * 1.2,
+            vy: -0.5,
+            direction: dir,
+            width: 26,
+            height: 18,
+            wingFlap: 0,
+            bombTimer: 1200 + Math.random() * 600,
+            fleeWaterTimer: 0,
+            waterSplashCooldown: 0,
+            protectedUntil: performance.now() + 5000
+        };
+        pigs.push(newPig);
+        if (typeof sendMobSpawnPacket === 'function') {
+            sendMobSpawnPacket('pig', newPig);
+        }
+        showSystemNotification("🐷 Zespawnowano dziką Latającą Świnię!", "#4caf50", 210, true);
     }
 }
 
@@ -1080,6 +1401,7 @@ function tryPvpMeleeAttack(worldMouseX, worldMouseY) {
             let dir = (rpCenterX >= playerCenterX) ? 1 : -1;
             player.direction = dir;
             sendPvpHit(id, 1, dir * 3.2, -3.2);
+            if (typeof sendPlayerState === 'function') sendPlayerState();
             return true;
         }
     }
@@ -1696,9 +2018,9 @@ function updateEntities() {
                     }
                 }
                 if (!player.ridingPig && !player.ridingCamel && !player.passengerOnPlayerId) {
-                    // 1. Wskoczenie jako 1. osoba na wolnego, oswojonego Wielbłąda dwugarbnego lub Dromadera
+                    // 1. Wskoczenie jako 1. osoba wyłącznie na dorosłego, oswojonego Wielbłąda dwugarbnego lub Dromadera
                     for (let c of camels) {
-                        if (!c.isTamed) continue;
+                        if (!c.isTamed || getCamelSpeciesAndRole(c.variant).role === 'mlody') continue;
                         if (player.x < c.x + c.width && player.x + player.width > c.x &&
                             player.y + player.height > c.y && player.y + player.height < c.y + c.height) {
                             player.ridingCamel = c;
@@ -1783,10 +2105,40 @@ function updateEntities() {
 
     if (player.damageEffect > 0) player.damageEffect--;
 
-    // Płynna aktualizacja segmentów i kolizji z innymi graczami przemienionymi w Czerwia (/czerw)
+    // Płynna interpolacja ruchu, animacji oraz akcji innych graczy w Multiplayerze (60-70 FPS bez szarpania!)
     for (let id in remotePlayers) {
         let rp = remotePlayers[id];
-        if (!rp || rp.inGame === false || !rp.isSandworm || rp.dead) continue;
+        if (!rp || rp.inGame === false) continue;
+
+        if (typeof rp.targetX === 'number' && typeof rp.targetY === 'number') {
+            let dx = rp.targetX - rp.x;
+            let dy = rp.targetY - rp.y;
+            let dist = Math.hypot(dx, dy);
+            if (dist > 90) {
+                // Natychmiastowy skok przy teleportacji (/spawn, wejście/wyjście z żołądka)
+                rp.x = rp.targetX;
+                rp.y = rp.targetY;
+            } else {
+                // Płynne doganianie pozycji docelowej + predykcja prędkości
+                rp.x += dx * 0.38 + (rp.vx || 0) * 0.22;
+                rp.y += dy * 0.38 + (rp.vy || 0) * 0.22;
+                if (Math.abs(rp.targetX - rp.x) < 0.15) rp.x = rp.targetX;
+                if (Math.abs(rp.targetY - rp.y) < 0.15) rp.y = rp.targetY;
+            }
+        }
+
+        // Płynne podtrzymanie animacji chodu oraz machania kilofem między pakietami sieciowymi
+        if (!rp.dead && !rp.isRiding && !rp.isRidingCamel && !rp.passengerOnPlayerId && Math.abs(rp.vx || 0) > 0.15) {
+            rp.walkFrame = (rp.walkFrame || 0) + (rp.isSwimming ? 0.08 : 0.12);
+        }
+        if (rp.isRidingCamel && Math.abs(rp.vx || 0) > 0.15) {
+            rp.camelWalkFrame = (rp.camelWalkFrame || 0) + 0.14;
+        }
+        if (rp.pickaxeAnim !== null && rp.pickaxeAnim !== undefined) {
+            rp.pickaxeAnim += 0.18;
+        }
+
+        if (!rp.isSandworm || rp.dead) continue;
         let rHeadX = rp.x + 8;
         let rHeadY = rp.y + 12;
         if (!Array.isArray(rp.wormSegments) || rp.wormSegments.length !== sandworm.numSegments) {
@@ -2060,7 +2412,7 @@ function updateEntities() {
     }
 
     // ==========================================
-    // JELENIE W LASACH (BYK, ŁANIA I CIELĘ — BEZPIECZNE CHODZENIE I JEDZENIE TRAWY)
+    // JELENIE W LASACH (BYK, ŁANIA I CIELĘ — PŁYNNE CHODZENIE BEZ BLOKOWANIA SIĘ I CZĘSTSZY RESP)
     // ==========================================
     let isDeerAuthority = (!roomCode || isRoomHost);
 
@@ -2068,14 +2420,21 @@ function updateEntities() {
         spawnInitialForestDeers();
     }
 
-    // Rzadki dynamiczny resp w gęstych lasach (maksymalnie do 3 jeleni w okolicy, rzadki interwał i szansa)
-    if (isDeerAuthority && deers.length < 3 && globalTick % 900 === 0 && Math.random() < 0.32 && !player.dead && !player.inStomach) {
-        let spawnSide = Math.random() > 0.5 ? 1 : -1;
-        let candTx = Math.floor(player.x / TILE_SIZE) + spawnSide * (28 + Math.floor(Math.random() * 22));
-        if (candTx > 15 && candTx < MAP_WIDTH - 15) {
-            let treesNearby = countTreesNearTileX(candTx, 15);
-            if (isForestAt(candTx) && treesNearby >= 2) {
-                spawnDeerGroupAtTile(candTx);
+    // Regularny, okresowy resp jeleni co jakiś czas w lasach i okolicach drzew (do 12 jeleni na mapie)
+    if (isDeerAuthority && deers.length < 12 && globalTick % 160 === 0 && Math.random() < 0.72 && !player.dead && !player.inStomach) {
+        let pTx = Math.floor(player.x / TILE_SIZE);
+        let nearbyDeers = deers.filter(d => Math.abs(d.x - player.x) < 60 * TILE_SIZE).length;
+        if (nearbyDeers < 6) {
+            // Przeszukaj kilka losowych miejsc w pobliżu gracza (poza bezpośrednim środkiem ekranu), szukając lasu lub drzew
+            for (let attempt = 0; attempt < 6; attempt++) {
+                let spawnSide = Math.random() > 0.5 ? 1 : -1;
+                let candTx = pTx + spawnSide * (18 + Math.floor(Math.random() * 36));
+                if (candTx > 14 && candTx < MAP_WIDTH - 14) {
+                    let treesNearby = countTreesNearTileX(candTx, 16);
+                    if (isForestAt(candTx) || treesNearby >= 1) {
+                        if (spawnDeerGroupAtTile(candTx) > 0) break;
+                    }
+                }
             }
         }
     }
@@ -2088,10 +2447,11 @@ function updateEntities() {
         d.height = dims.height;
         d.baseSpeed = dims.speed;
         if (d.jumpCooldown > 0) d.jumpCooldown--;
+        if (d.turnCooldown > 0) d.turnCooldown--;
 
-        // Jeśli jeleń utknął w bloku ziemi/kamienia (np. po postawieniu bloku przez gracza), wypchnij go bezpiecznie w górę
+        // Natychmiastowe wysunięcie w górę, jeśli jeleń znalazł się wewnątrz bloku ziemi/kamienia
         let unstickSteps = 0;
-        while (checkDeerCollision(d.x, d.y, d.width, d.height) && unstickSteps < 10 && d.y > TILE_SIZE * 2) {
+        while (checkDeerCollision(d.x, d.y, d.width, d.height) && unstickSteps < 14 && d.y > TILE_SIZE * 2) {
             d.y -= 4;
             d.vy = 0;
             unstickSteps++;
@@ -2124,20 +2484,20 @@ function updateEntities() {
                     d.direction = Math.random() > 0.5 ? 1 : -1;
                     d.stateTimer = 100 + Math.floor(Math.random() * 150);
                 } else if (d.state === 'walk') {
-                    if (d.grounded && groundBlock === BLOCKS.GRASS && Math.random() < 0.58) {
+                    if (d.grounded && groundBlock === BLOCKS.GRASS && Math.random() < 0.52) {
                         d.state = 'graze';
                         d.vx = 0;
-                        d.stateTimer = 110 + Math.floor(Math.random() * 70);
+                        d.stateTimer = 100 + Math.floor(Math.random() * 65);
                     } else {
                         d.state = 'idle';
                         d.vx = 0;
-                        d.stateTimer = 55 + Math.floor(Math.random() * 70);
+                        d.stateTimer = 45 + Math.floor(Math.random() * 60);
                     }
                 } else {
-                    if (d.grounded && groundBlock === BLOCKS.GRASS && Math.random() < 0.45) {
+                    if (d.grounded && groundBlock === BLOCKS.GRASS && Math.random() < 0.42) {
                         d.state = 'graze';
                         d.vx = 0;
-                        d.stateTimer = 110 + Math.floor(Math.random() * 70);
+                        d.stateTimer = 100 + Math.floor(Math.random() * 65);
                     } else {
                         d.state = 'walk';
                         d.direction = Math.random() > 0.5 ? 1 : -1;
@@ -2168,16 +2528,20 @@ function updateEntities() {
             d.walkFrame += 0.105;
             d.grazeProgress = Math.max(0, (d.grazeProgress || 0) - 0.10);
 
-            let aheadTx = Math.floor((d.x + (d.direction === 1 ? d.width + 6 : -6)) / TILE_SIZE);
-            let aheadFootTile = getTile(aheadTx, footTy);
-            let aheadBodyTile = getTile(aheadTx, footTy - 1);
-            // Zawróć przed wodą, kaktusem lub głęboką przepaścią (> 3 bloki w dół)
-            let dropCheck = (getTile(aheadTx, footTy + 1) === BLOCKS.AIR &&
-                             getTile(aheadTx, footTy + 2) === BLOCKS.AIR &&
-                             getTile(aheadTx, footTy + 3) === BLOCKS.AIR);
-            if (aheadFootTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.CACTUS || dropCheck) {
-                d.direction *= -1;
-                d.vx = d.direction * d.baseSpeed;
+            if (!d.turnCooldown || d.turnCooldown <= 0) {
+                let aheadTx = Math.floor((d.x + (d.direction === 1 ? d.width + 6 : -6)) / TILE_SIZE);
+                let aheadFootTile = getTile(aheadTx, footTy);
+                let aheadBodyTile = getTile(aheadTx, footTy - 1);
+                // Zawróć wyłącznie przed wodą, kaktusem lub bardzo głęboką przepaścią (> 4 bloki w dół)
+                let deepDrop = (getTile(aheadTx, footTy + 1) === BLOCKS.AIR &&
+                                getTile(aheadTx, footTy + 2) === BLOCKS.AIR &&
+                                getTile(aheadTx, footTy + 3) === BLOCKS.AIR &&
+                                getTile(aheadTx, footTy + 4) === BLOCKS.AIR);
+                if (aheadFootTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.CACTUS || deepDrop) {
+                    d.direction *= -1;
+                    d.vx = d.direction * d.baseSpeed;
+                    d.turnCooldown = 30;
+                }
             }
         } else if (d.state === 'graze') {
             d.vx = 0;
@@ -2204,18 +2568,31 @@ function updateEntities() {
         d.vy += GRAVITY;
         if (d.vy > MAX_FALL_SPEED) d.vy = MAX_FALL_SPEED;
 
+        let prevX = d.x;
         if (d.vx !== 0) {
             if (!checkDeerCollision(d.x + d.vx, d.y, d.width, d.height)) {
                 d.x += d.vx;
+                d.stuckTimer = 0;
+            } else if (!checkDeerCollision(d.x + d.vx, d.y - TILE_SIZE, d.width, d.height)) {
+                // Płynne wejście na 1-blokowy stopień terenu (natychmiastowe uniesienie o 1 blok zapobiega cofaniu w powietrzu!)
+                d.y -= TILE_SIZE;
+                d.x += d.vx;
+                if (d.vy > 0) d.vy = 0;
+                d.stuckTimer = 0;
             } else if (d.grounded && (!d.jumpCooldown || d.jumpCooldown <= 0) &&
-                       !checkDeerCollision(d.x + d.vx * 2, d.y - TILE_SIZE, d.width, d.height)) {
-                // Płynne wskoczenie na 1-blokowy stopień terenu (z cooldownem, żeby jeleń nie podskakiwał w miejscu)
-                d.vy = -3.4;
+                       !checkDeerCollision(d.x + d.vx, d.y - TILE_SIZE * 2, d.width, d.height)) {
+                // Skok na 2-blokowy próg terenu
+                d.y -= TILE_SIZE;
+                d.vy = -3.8;
                 d.grounded = false;
                 d.jumpCooldown = 28;
+                d.stuckTimer = 0;
+            } else if (d.vy < -0.2) {
+                // Gdy jeleń wznosi się podczas skoku, NIE zawracamy go w powietrzu — czekamy aż doleci na szczyt progu
             } else {
                 d.direction *= -1;
                 d.vx = 0;
+                d.turnCooldown = 25;
             }
         }
 
@@ -2226,6 +2603,32 @@ function updateEntities() {
             if (d.vy > 0) d.grounded = true;
             d.vy = 0;
             d.y = Math.round(d.y);
+        }
+
+        // Detektor utknięcia w wąskich dołkach / rozpadlinach — jeśli jeleń chce iść, a nie przesuwa się w osi X
+        if (d.state === 'walk') {
+            if (Math.abs(d.x - prevX) < 0.05) {
+                d.stuckTimer = (d.stuckTimer || 0) + 1;
+                if (d.stuckTimer === 18) {
+                    if (!checkDeerCollision(d.x, d.y - TILE_SIZE, d.width, d.height)) {
+                        d.y -= TILE_SIZE;
+                        d.vy = -3.2;
+                    } else {
+                        d.direction *= -1;
+                    }
+                } else if (d.stuckTimer > 40) {
+                    // Wydostań jelenia na powierzchnię w tym punkcie
+                    let surfY = (surfaceHeights[centerTx] || SEA_LEVEL - 4) * TILE_SIZE - d.height - 2;
+                    if (!checkDeerCollision(d.x, surfY, d.width, d.height)) {
+                        d.y = surfY;
+                        d.vy = 0;
+                    }
+                    d.direction *= -1;
+                    d.stuckTimer = 0;
+                }
+            } else {
+                d.stuckTimer = 0;
+            }
         }
 
         if (d.x < TILE_SIZE * 2) { d.x = TILE_SIZE * 2; d.direction = 1; }
@@ -2239,14 +2642,14 @@ function updateEntities() {
                     if (distP < minDistToAnyPlayer) minDistToAnyPlayer = distP;
                 }
             }
-            if (minDistToAnyPlayer > 95 * TILE_SIZE) {
+            if (minDistToAnyPlayer > 110 * TILE_SIZE) {
                 deers.splice(i, 1);
             }
         }
     }
 
     // ==========================================
-    // WIELBŁĄDY I DROMADERY NA PUSTYNI (CHODZENIE PO WYDMACH, SKUBANIE KAKTUSÓW I ODPOCZYNEK)
+    // WIELBŁĄDY I DROMADERY NA PUSTYNI (PŁYNNE CHODZENIE PO WYDMACH, ZJADANIE OPUNCJI I CZĘSTSZY RESP)
     // ==========================================
     let isCamelAuthority = (!roomCode || isRoomHost);
 
@@ -2254,12 +2657,18 @@ function updateEntities() {
         spawnInitialDesertCamels();
     }
 
-    // Rzadki dynamiczny resp na pustyni (maksymalnie do 3 wielbłądów/dromaderów na mapie)
-    if (isCamelAuthority && camels.length < 3 && globalTick % 900 === 0 && Math.random() < 0.32 && !player.dead && !player.inStomach) {
-        let spawnSide = Math.random() > 0.5 ? 1 : -1;
-        let candTx = Math.floor(player.x / TILE_SIZE) + spawnSide * (28 + Math.floor(Math.random() * 22));
-        if (candTx > 15 && candTx < MAP_WIDTH - 15 && isDesertAt(candTx)) {
-            spawnCamelGroupAtTile(candTx);
+    // Regularny, okresowy resp wielbłądów i dromaderów co jakiś czas na pustyni (do 12 osobników na mapie)
+    if (isCamelAuthority && camels.length < 12 && globalTick % 160 === 0 && Math.random() < 0.72 && !player.dead && !player.inStomach) {
+        let pTx = Math.floor(player.x / TILE_SIZE);
+        let nearbyCamels = camels.filter(c => Math.abs(c.x - player.x) < 60 * TILE_SIZE).length;
+        if (nearbyCamels < 6) {
+            for (let attempt = 0; attempt < 6; attempt++) {
+                let spawnSide = Math.random() > 0.5 ? 1 : -1;
+                let candTx = pTx + spawnSide * (18 + Math.floor(Math.random() * 36));
+                if (candTx > 14 && candTx < MAP_WIDTH - 14 && isDesertAt(candTx)) {
+                    if (spawnCamelGroupAtTile(candTx) > 0) break;
+                }
+            }
         }
     }
 
@@ -2271,6 +2680,7 @@ function updateEntities() {
         c.height = dims.height;
         c.baseSpeed = dims.speed;
         if (c.jumpCooldown > 0) c.jumpCooldown--;
+        if (c.turnCooldown > 0) c.turnCooldown--;
 
         // Jeśli gracz aktualnie jedzie na tym wielbłądzie, ruchem steruje gracz
         if (player.ridingCamel === c) {
@@ -2279,9 +2689,9 @@ function updateEntities() {
             continue;
         }
 
-        // Bezpieczne wysunięcie w górę, jeśli wielbłąd znalazł się wewnątrz postawionego bloku
+        // Natychmiastowe wysunięcie w górę, jeśli wielbłąd znalazł się wewnątrz bloku
         let unstickSteps = 0;
-        while (checkCamelCollision(c.x, c.y, c.width, c.height) && unstickSteps < 10 && c.y > TILE_SIZE * 2) {
+        while (checkCamelCollision(c.x, c.y, c.width, c.height) && unstickSteps < 14 && c.y > TILE_SIZE * 2) {
             c.y -= 4;
             c.vy = 0;
             unstickSteps++;
@@ -2330,23 +2740,23 @@ function updateEntities() {
                     c.direction = Math.random() > 0.5 ? 1 : -1;
                     c.stateTimer = 110 + Math.floor(Math.random() * 160);
                 } else if (c.state === 'walk') {
-                    if (c.grounded && (cactusTx !== -1 || (groundBlock === BLOCKS.SAND && Math.random() < 0.52))) {
+                    if (c.grounded && (cactusTx !== -1 || (groundBlock === BLOCKS.SAND && Math.random() < 0.48))) {
                         c.state = 'graze';
                         c.vx = 0;
                         if (cactusTx !== -1) {
                             c.direction = (cactusTx * TILE_SIZE >= c.x) ? 1 : -1;
                         }
-                        c.stateTimer = 115 + Math.floor(Math.random() * 75);
+                        c.stateTimer = 110 + Math.floor(Math.random() * 70);
                     } else {
                         c.state = 'idle';
                         c.vx = 0;
-                        c.stateTimer = 65 + Math.floor(Math.random() * 80);
+                        c.stateTimer = 55 + Math.floor(Math.random() * 70);
                     }
                 } else {
-                    if (c.grounded && (cactusTx !== -1 || (groundBlock === BLOCKS.SAND && Math.random() < 0.40))) {
+                    if (c.grounded && (cactusTx !== -1 || (groundBlock === BLOCKS.SAND && Math.random() < 0.38))) {
                         c.state = 'graze';
                         c.vx = 0;
-                        c.stateTimer = 115 + Math.floor(Math.random() * 75);
+                        c.stateTimer = 110 + Math.floor(Math.random() * 70);
                     } else {
                         c.state = 'walk';
                         c.direction = Math.random() > 0.5 ? 1 : -1;
@@ -2363,7 +2773,6 @@ function updateEntities() {
                                 let oInfo = getCamelSpeciesAndRole(other.variant);
                                 if (oInfo.species === cInfo.species && (oInfo.role === 'samica' || oInfo.role === 'samiec')) {
                                     let dist = Math.abs(other.x - c.x);
-                                    // Preferuj samicę własnego gatunku
                                     let weightedDist = (oInfo.role === 'samica') ? dist : dist * 1.35;
                                     if (weightedDist < minMomDist) {
                                         minMomDist = weightedDist;
@@ -2383,19 +2792,23 @@ function updateEntities() {
 
         if (c.state === 'walk') {
             c.vx = c.direction * c.baseSpeed;
-            c.walkFrame += 0.09;
+            c.walkFrame += 0.095;
             c.grazeProgress = Math.max(0, (c.grazeProgress || 0) - 0.09);
 
-            let aheadTx = Math.floor((c.x + (c.direction === 1 ? c.width + 6 : -6)) / TILE_SIZE);
-            let aheadFootTile = getTile(aheadTx, footTy);
-            let aheadBodyTile = getTile(aheadTx, footTy - 1);
-            let dropCheck = (getTile(aheadTx, footTy + 1) === BLOCKS.AIR &&
-                             getTile(aheadTx, footTy + 2) === BLOCKS.AIR &&
-                             getTile(aheadTx, footTy + 3) === BLOCKS.AIR);
-            // Wielbłądy zawracają przed wodą lub głębokim urwiskiem
-            if (aheadFootTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.WATER || dropCheck) {
-                c.direction *= -1;
-                c.vx = c.direction * c.baseSpeed;
+            if (!c.turnCooldown || c.turnCooldown <= 0) {
+                let aheadTx = Math.floor((c.x + (c.direction === 1 ? c.width + 6 : -6)) / TILE_SIZE);
+                let aheadFootTile = getTile(aheadTx, footTy);
+                let aheadBodyTile = getTile(aheadTx, footTy - 1);
+                let deepDrop = (getTile(aheadTx, footTy + 1) === BLOCKS.AIR &&
+                                getTile(aheadTx, footTy + 2) === BLOCKS.AIR &&
+                                getTile(aheadTx, footTy + 3) === BLOCKS.AIR &&
+                                getTile(aheadTx, footTy + 4) === BLOCKS.AIR);
+                // Wielbłądy zawracają przed wodą lub głębokim urwiskiem
+                if (aheadFootTile === BLOCKS.WATER || aheadBodyTile === BLOCKS.WATER || deepDrop) {
+                    c.direction *= -1;
+                    c.vx = c.direction * c.baseSpeed;
+                    c.turnCooldown = 30;
+                }
             }
         } else if (c.state === 'graze') {
             c.vx = 0;
@@ -2410,7 +2823,7 @@ function updateEntities() {
                     vx: (Math.random() - 0.5) * 0.7,
                     vy: -0.5 - Math.random() * 0.6,
                     size: 2,
-                    color: isEatingCactus ? '#2E8B57' : (Math.random() > 0.4 ? '#DEB887' : '#84cc16'),
+                    color: isEatingCactus ? '#f43f5e' : (Math.random() > 0.4 ? '#DEB887' : '#84cc16'),
                     life: 16
                 });
             }
@@ -2423,17 +2836,31 @@ function updateEntities() {
         c.vy += GRAVITY;
         if (c.vy > MAX_FALL_SPEED) c.vy = MAX_FALL_SPEED;
 
+        let prevX = c.x;
         if (c.vx !== 0) {
             if (!checkCamelCollision(c.x + c.vx, c.y, c.width, c.height)) {
                 c.x += c.vx;
+                c.stuckTimer = 0;
+            } else if (!checkCamelCollision(c.x + c.vx, c.y - TILE_SIZE, c.width, c.height)) {
+                // Płynne wchodzenie na 1-blokowe wydmy i stopnie (natychmiastowe uniesienie o 1 blok zapobiega klinowaniu się!)
+                c.y -= TILE_SIZE;
+                c.x += c.vx;
+                if (c.vy > 0) c.vy = 0;
+                c.stuckTimer = 0;
             } else if (c.grounded && (!c.jumpCooldown || c.jumpCooldown <= 0) &&
-                       !checkCamelCollision(c.x + c.vx * 2, c.y - TILE_SIZE, c.width, c.height)) {
-                c.vy = -3.4;
+                       !checkCamelCollision(c.x + c.vx, c.y - TILE_SIZE * 2, c.width, c.height)) {
+                // Skok na 2-blokowy uskok wydmy
+                c.y -= TILE_SIZE;
+                c.vy = -3.8;
                 c.grounded = false;
                 c.jumpCooldown = 28;
+                c.stuckTimer = 0;
+            } else if (c.vy < -0.2) {
+                // Gdy wielbłąd wznosi się podczas skoku, nie zawracamy go w powietrzu
             } else {
                 c.direction *= -1;
                 c.vx = 0;
+                c.turnCooldown = 25;
             }
         }
 
@@ -2444,6 +2871,31 @@ function updateEntities() {
             if (c.vy > 0) c.grounded = true;
             c.vy = 0;
             c.y = Math.round(c.y);
+        }
+
+        // Detektor utknięcia w dołkach między wydmami
+        if (c.state === 'walk') {
+            if (Math.abs(c.x - prevX) < 0.05) {
+                c.stuckTimer = (c.stuckTimer || 0) + 1;
+                if (c.stuckTimer === 18) {
+                    if (!checkCamelCollision(c.x, c.y - TILE_SIZE, c.width, c.height)) {
+                        c.y -= TILE_SIZE;
+                        c.vy = -3.2;
+                    } else {
+                        c.direction *= -1;
+                    }
+                } else if (c.stuckTimer > 40) {
+                    let surfY = (surfaceHeights[centerTx] || SEA_LEVEL - 4) * TILE_SIZE - c.height - 2;
+                    if (!checkCamelCollision(c.x, surfY, c.width, c.height)) {
+                        c.y = surfY;
+                        c.vy = 0;
+                    }
+                    c.direction *= -1;
+                    c.stuckTimer = 0;
+                }
+            } else {
+                c.stuckTimer = 0;
+            }
         }
 
         if (c.x < TILE_SIZE * 2) { c.x = TILE_SIZE * 2; c.direction = 1; }
@@ -2457,8 +2909,223 @@ function updateEntities() {
                     if (distP < minDistToAnyPlayer) minDistToAnyPlayer = distP;
                 }
             }
-            if (!c.isTamed && minDistToAnyPlayer > 95 * TILE_SIZE) {
+            if (!c.isTamed && minDistToAnyPlayer > 110 * TILE_SIZE) {
                 camels.splice(i, 1);
+            }
+        }
+    }
+
+    // ==========================================
+    // RYBY W WODZIE I OCEANACH (BŁAZENKI, ZŁOTE RYBKI SKACZĄCE, ROZDYMKI KOLCZASTE I RYBY GŁĘBINOWE)
+    // ==========================================
+    let isFishAuthority = (!roomCode || isRoomHost);
+
+    if (isFishAuthority && fishes.length === 0 && globalTick === 5) {
+        spawnInitialOceanFishes();
+    }
+
+    // Okresowy resp ryb w wodzie/oceanach co jakiś czas (do 20 ryb na mapie)
+    if (isFishAuthority && fishes.length < 20 && globalTick % 150 === 0 && Math.random() < 0.75 && !player.dead && !player.inStomach) {
+        let pTx = Math.floor(player.x / TILE_SIZE);
+        for (let attempt = 0; attempt < 5; attempt++) {
+            let side = Math.random() > 0.5 ? 1 : -1;
+            let candTx = pTx + side * (12 + Math.floor(Math.random() * 34));
+            if (candTx > 10 && candTx < MAP_WIDTH - 10 && surfaceHeights[candTx] > SEA_LEVEL + 4) {
+                if (spawnFishSchoolAtTile(candTx) > 0) break;
+            }
+        }
+    }
+
+    for (let i = fishes.length - 1; i >= 0; i--) {
+        let f = fishes[i];
+        if (!f.id) f.id = generateFishId();
+        let dims = getFishDimensions(f.variant);
+        f.width = dims.width;
+        f.height = dims.height;
+        f.baseSpeed = dims.speed;
+        if (f.fedCooldown > 0) f.fedCooldown--;
+
+        let fcx = f.x + f.width / 2;
+        let fcy = f.y + f.height / 2;
+        let fTx = Math.floor(fcx / TILE_SIZE);
+        let fTy = Math.floor(fcy / TILE_SIZE);
+        let tileAtFish = getTile(fTx, fTy);
+        let inWaterNow = (tileAtFish === BLOCKS.WATER || (tileAtFish === BLOCKS.KELP && isSubmergedTile(fTx, fTy)));
+
+        // Mechanika 1: Rozdymka Kolczasta ('rozdymka') nadyma się w wielką kolczastą kulę, gdy gracz podpłynie blisko!
+        if (f.variant === 'rozdymka') {
+            let distToPlayer = Math.hypot((player.x + player.width / 2) - fcx, (player.y + player.height / 2) - fcy);
+            let nearAnyPlayer = (!player.dead && !player.inStomach && distToPlayer < 62);
+            if (!nearAnyPlayer) {
+                for (let pid in remotePlayers) {
+                    let rp = remotePlayers[pid];
+                    if (rp && !rp.dead && !rp.inStomach && Math.hypot((rp.x + 8) - fcx, (rp.y + 12) - fcy) < 62) {
+                        nearAnyPlayer = true;
+                        break;
+                    }
+                }
+            }
+            if (nearAnyPlayer) {
+                if (!f.isPuffed && inWaterNow) {
+                    f.isPuffed = true;
+                    f.puffTimer = 110;
+                    // Bąbelki przy gwałtownym nadęciu się Rozdymki
+                    for (let b = 0; b < 5; b++) {
+                        waterBubbles.push({
+                            x: fcx + (Math.random() - 0.5) * 12,
+                            y: fcy + (Math.random() - 0.5) * 12,
+                            vy: -0.6 - Math.random() * 0.4,
+                            r: 1.8
+                        });
+                    }
+                } else {
+                    f.puffTimer = Math.max(f.puffTimer, 60);
+                }
+            } else if (f.puffTimer > 0) {
+                f.puffTimer--;
+                if (f.puffTimer <= 0) f.isPuffed = false;
+            }
+            let targetScale = f.isPuffed ? 2.15 : 1.0;
+            f.puffScale = (f.puffScale || 1.0) + (targetScale - (f.puffScale || 1.0)) * 0.18;
+
+            // Jeśli gracz dotknie nadętej Rozdymki (w trybie Survival), kolce lekko go odrzucają i kłują!
+            if (f.isPuffed && !player.dead && player.gameMode !== 1 && player.invulTimer <= 0 && distToPlayer < 22) {
+                let pushDir = (player.x + player.width / 2 >= fcx) ? 1 : -1;
+                player.vx = pushDir * 2.8;
+                player.vy = -2.4;
+                damagePlayer(1);
+            }
+        } else {
+            f.isPuffed = false;
+            f.puffScale = 1.0;
+        }
+
+        if (inWaterNow) {
+            // Ryba jest w wodzie!
+            if (f.state === 'leap' || f.state === 'flop') {
+                if (f.vy > 1.2) {
+                    createWaterSplash(fcx, f.y, 8);
+                }
+                f.state = 'swim';
+                f.vy *= 0.3;
+            }
+
+            f.swimPhase += (f.state === 'dart' ? 0.34 : 0.18);
+            f.stateTimer--;
+
+            // Płoszenie ryb, gdy gracz szybko płynie tuż obok (z wyjątkiem nadętej Rozdymki lub gdy gracz trzyma Wodorosty!)
+            let currentHeld = hotbar[selectedSlotIndex];
+            let holdingKelp = Boolean(currentHeld && currentHeld.type === BLOCKS.KELP && currentHeld.count > 0);
+            let pDist = Math.hypot((player.x + player.width / 2) - fcx, (player.y + player.height / 2) - fcy);
+
+            if (holdingKelp && f.variant === 'blazenek' && pDist < 95 && pDist > 20) {
+                // Błazenki podpływają ciekawie do gracza trzymającego Wodorosty!
+                f.direction = (player.x + player.width / 2 >= fcx) ? 1 : -1;
+                f.vx = f.direction * f.baseSpeed * 1.15;
+                f.vy = ((player.y + player.height / 2) - fcy) * 0.03;
+            } else if (!holdingKelp && f.variant !== 'rozdymka' && player.inWater && pDist < 46 && Math.hypot(player.vx, player.vy) > 0.9) {
+                f.state = 'dart';
+                f.direction = (fcx >= player.x + player.width / 2) ? 1 : -1;
+                f.stateTimer = 35;
+                if (Math.random() < 0.25) {
+                    waterBubbles.push({ x: fcx, y: fcy, vy: -0.6, r: 1.5 });
+                }
+            }
+
+            if (f.stateTimer <= 0) {
+                // Złota Rybka blisko powierzchni wody ma szansę wyskoczyć łukiem ponad taflę wody!
+                if (f.variant === 'zlota' && fTy <= SEA_LEVEL + 3 && getTile(fTx, SEA_LEVEL - 1) === BLOCKS.AIR && Math.random() < 0.32) {
+                    f.state = 'leap';
+                    f.vy = -4.2 - Math.random() * 0.8;
+                    f.vx = f.direction * (f.baseSpeed * 1.85);
+                    f.stateTimer = 55;
+                    createWaterSplash(fcx, SEA_LEVEL * TILE_SIZE, 10);
+                } else {
+                    f.state = 'swim';
+                    if (Math.random() < 0.45) f.direction *= -1;
+                    f.vy = (Math.random() - 0.5) * 0.45;
+                    f.stateTimer = 80 + Math.floor(Math.random() * 130);
+                }
+            }
+
+            let spdMult = f.isPuffed ? 0.35 : (f.state === 'dart' ? 2.1 : 1.0);
+            f.vx = f.direction * f.baseSpeed * spdMult;
+
+            // Utrzymuj Świecącą Rybę Głębinową głębiej pod wodą, a Złotą Rybkę bliżej powierzchni
+            if (f.variant === 'glebinowa' && fTy < SEA_LEVEL + 6) {
+                f.vy = Math.max(f.vy, 0.28);
+            } else if (f.variant === 'zlota' && fTy > SEA_LEVEL + 7) {
+                f.vy = Math.min(f.vy, -0.25);
+            } else if (fTy <= SEA_LEVEL && f.state !== 'leap') {
+                f.vy = Math.max(0.25, f.vy);
+            }
+
+            // Sprawdź czy przed rybą jest woda; jeśli ściana lądu — zawróć płynnie
+            let nextX = f.x + f.vx;
+            let aheadTx = Math.floor((nextX + (f.direction === 1 ? f.width + 2 : -2)) / TILE_SIZE);
+            let aheadTile = getTile(aheadTx, fTy);
+            if (aheadTile === BLOCKS.WATER || (aheadTile === BLOCKS.KELP && isSubmergedTile(aheadTx, fTy))) {
+                f.x = nextX;
+            } else {
+                f.direction *= -1;
+                f.vx = f.direction * f.baseSpeed;
+            }
+
+            let nextY = f.y + f.vy + Math.sin(f.swimPhase * 0.5) * 0.12;
+            let nextTy = Math.floor((nextY + (f.vy >= 0 ? f.height : 0)) / TILE_SIZE);
+            let vertTile = getTile(fTx, nextTy);
+            if (f.state === 'leap' || vertTile === BLOCKS.WATER || (vertTile === BLOCKS.KELP && isSubmergedTile(fTx, nextTy))) {
+                f.y = nextY;
+            } else {
+                f.vy *= -0.7;
+            }
+
+            // Losowe drobne bąbelki powietrza od ryb
+            if (Math.random() < 0.008) {
+                waterBubbles.push({
+                    x: fcx + f.direction * 5,
+                    y: fcy - 2,
+                    vy: -0.45 - Math.random() * 0.3,
+                    r: 1.3 + Math.random() * 1.0
+                });
+            }
+        } else {
+            // Ryba znalazła się nad wodą (w trakcie skoku 'leap' albo trzepocze na lądzie 'flop'!)
+            f.vy += GRAVITY * 0.85;
+            if (f.vy > MAX_FALL_SPEED) f.vy = MAX_FALL_SPEED;
+            f.swimPhase += 0.45;
+
+            if (!checkCollision(f.x + f.vx, f.y, f.width, f.height)) {
+                f.x += f.vx;
+            } else {
+                f.direction *= -1;
+                f.vx = f.direction * 0.8;
+            }
+
+            if (!checkCollision(f.x, f.y + f.vy, f.width, f.height)) {
+                f.y += f.vy;
+            } else {
+                // Trzepotanie i podskakiwanie ryby na lądzie w stronę wody!
+                f.state = 'flop';
+                f.vy = -2.4 - Math.random() * 1.2;
+                if (Math.random() < 0.4) f.direction *= -1;
+                f.vx = f.direction * (0.9 + Math.random() * 0.8);
+            }
+        }
+
+        if (f.x < TILE_SIZE * 2) { f.x = TILE_SIZE * 2; f.direction = 1; }
+        if (f.x > (MAP_WIDTH - 3) * TILE_SIZE - f.width) { f.x = (MAP_WIDTH - 3) * TILE_SIZE - f.width; f.direction = -1; }
+
+        if (isFishAuthority) {
+            let minDistToAnyPlayer = Math.abs(f.x - player.x);
+            for (let id in remotePlayers) {
+                if (remotePlayers[id]) {
+                    let distP = Math.abs(f.x - remotePlayers[id].x);
+                    if (distP < minDistToAnyPlayer) minDistToAnyPlayer = distP;
+                }
+            }
+            if (minDistToAnyPlayer > 110 * TILE_SIZE) {
+                fishes.splice(i, 1);
             }
         }
     }
@@ -2580,7 +3247,8 @@ function updateEntities() {
         let hitOtherPlayer = false;
         let interactedWithCamel = false;
         if (clickMining || clickPlacing) {
-            interactedWithCamel = tryInteractWithCamel(worldMouseX, worldMouseY, clickPlacing);
+            interactedWithCamel = tryInteractWithCamel(worldMouseX, worldMouseY, clickPlacing) ||
+                                  tryInteractWithFish(worldMouseX, worldMouseY, clickPlacing);
         }
         if (clickMining && !interactedWithCamel) {
             hitOtherPlayer = tryPvpMeleeAttack(worldMouseX, worldMouseY);
@@ -2680,7 +3348,7 @@ function updateEntities() {
         miningY = -1;
     }
 
-    if (roomCode && globalTick % 2 === 0) {
+    if (roomCode) {
         sendPlayerState();
     }
 }

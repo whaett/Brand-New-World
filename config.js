@@ -16,8 +16,8 @@ const VERSION = "1.5";
 const SCALE = 2.5; 
 const TILE_SIZE = 20; 
 
-const MAP_WIDTH = 1200;
-const MAP_HEIGHT = 220;
+const MAP_WIDTH = 1650;
+const MAP_HEIGHT = 240;
 const SEA_LEVEL = 64;
 
 // Wymiary małego świata (Żołądka Czerwia)
